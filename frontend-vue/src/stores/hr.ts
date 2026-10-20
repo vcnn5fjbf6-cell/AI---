@@ -212,8 +212,8 @@ export const useHrStore = defineStore("hr", {
     stats: { totalEmployees: 0, todayPresent: 0, todayAbsent: 0, pendingLeave: 0, todayOTHours: 0, monthOTHours: 0 },
     performance: [] as HrPerformanceScore[],
     aiConfig: {
-      endpoint: `${window.location.protocol}//${window.location.hostname}:11434/v1/chat/completions`,
-      model: "mock-ai",
+      endpoint: "https://api.openai.com/v1/chat/completions",
+      model: "gpt-4o-mini",
       apiKey: "",
       systemPrompt: "",
       maxTokens: 2048,
@@ -267,10 +267,10 @@ export const useHrStore = defineStore("hr", {
       });
       this.performance = readJson<HrPerformanceScore[]>(PERFORMANCE_KEY, []);
       const storedAiConfig = readJson<Partial<HrAiConfig>>(AI_CONFIG_KEY, {});
-      const defaultAiEndpoint = `${window.location.protocol}//${window.location.hostname}:11434/v1/chat/completions`;
-      if (!storedAiConfig.endpoint || storedAiConfig.endpoint.includes("localhost:11434")) {
+      const defaultAiEndpoint = "https://api.openai.com/v1/chat/completions";
+      if (!storedAiConfig.endpoint || storedAiConfig.model === "mock-ai") {
         storedAiConfig.endpoint = defaultAiEndpoint;
-        storedAiConfig.model = storedAiConfig.model || "mock-ai";
+        if (!storedAiConfig.model || storedAiConfig.model === "mock-ai") storedAiConfig.model = "gpt-4o-mini";
         writeJson(AI_CONFIG_KEY, storedAiConfig);
       }
       this.aiConfig = { ...this.aiConfig, ...storedAiConfig };

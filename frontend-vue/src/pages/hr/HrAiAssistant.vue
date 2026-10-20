@@ -46,7 +46,7 @@
     <el-dialog v-model="settingsVisible" title="AI 配置" width="480px">
       <el-form label-width="90px">
         <el-form-item label="API 地址">
-          <el-input v-model="configForm.endpoint" placeholder="http://localhost:11434/v1/chat/completions" />
+          <el-input v-model="configForm.endpoint" placeholder="https://api.openai.com/v1/chat/completions" />
         </el-form-item>
         <el-form-item label="模型名称">
           <el-input v-model="configForm.model" placeholder="qwen2.5 / gpt-4o-mini / deepseek-chat" />
@@ -167,8 +167,8 @@ async function send(): Promise<void> {
   await scrollToBottom();
   try {
     const config = hrStore.aiConfig;
-    const mockEndpoint = `${window.location.protocol}//${window.location.hostname}:11434/v1/chat/completions`;
-    const endpoint = config.model === "mock-ai" || !config.endpoint || config.endpoint.includes("localhost:11434") ? mockEndpoint : config.endpoint;
+    if (!config.apiKey) throw new Error("请先在 AI 设置中填写 API Key");
+    const endpoint = config.endpoint || "https://api.openai.com/v1/chat/completions";
     const recent = hrStore.aiMessages.slice(-20, -1);
     const messages = [
       { role: "system", content: config.systemPrompt || buildSystemPrompt() },
@@ -181,7 +181,7 @@ async function send(): Promise<void> {
       method: "POST",
       headers,
       body: JSON.stringify({
-        model: config.model,
+        model: config.model || "gpt-4o-mini",
         messages,
         max_tokens: config.maxTokens,
         temperature: config.temperature,
