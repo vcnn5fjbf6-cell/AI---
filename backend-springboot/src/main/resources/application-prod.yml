@@ -1,0 +1,85 @@
+server:
+  port: ${SERVER_PORT:8080}
+
+spring:
+  servlet:
+    multipart:
+      max-file-size: 20MB
+      max-request-size: 110MB
+  datasource:
+    url: ${DB_URL}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  data:
+    redis:
+      host: ${REDIS_HOST:redis}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      timeout: ${REDIS_TIMEOUT:2s}
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+
+springdoc:
+  api-docs:
+    enabled: ${OPENAPI_ENABLED:false}
+  swagger-ui:
+    enabled: ${OPENAPI_ENABLED:false}
+
+auth:
+  jwt:
+    secret: ${JWT_SECRET}
+    issuer: ${JWT_ISSUER:enterprise-procurement-platform}
+    expire-seconds: ${JWT_EXPIRE_SECONDS:7200}
+    header-name: ${JWT_HEADER_NAME:Authorization}
+    token-prefix: ${JWT_TOKEN_PREFIX:Bearer}
+    clock-skew-seconds: ${JWT_CLOCK_SKEW_SECONDS:60}
+
+feishu:
+  auth:
+    enabled: ${FEISHU_AUTH_ENABLED:false}
+    app-id: ${FEISHU_APP_ID:}
+    app-secret: ${FEISHU_APP_SECRET:}
+    redirect-uri: ${FEISHU_REDIRECT_URI:}
+    authorize-url: ${FEISHU_AUTHORIZE_URL:https://open.feishu.cn/open-apis/authen/v1/index}
+    app-access-token-url: ${FEISHU_APP_ACCESS_TOKEN_URL:https://open.feishu.cn/open-apis/auth/v3/app_access_token/internal}
+    tenant-access-token-url: ${FEISHU_TENANT_ACCESS_TOKEN_URL:https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal}
+    access-token-url: ${FEISHU_ACCESS_TOKEN_URL:https://open.feishu.cn/open-apis/authen/v1/access_token}
+    user-info-url: ${FEISHU_USER_INFO_URL:https://open.feishu.cn/open-apis/authen/v1/user_info}
+    user-detail-url: ${FEISHU_USER_DETAIL_URL:https://open.feishu.cn/open-apis/contact/v3/users/%s}
+    user-batch-get-id-url: ${FEISHU_USER_BATCH_GET_ID_URL:https://open.feishu.cn/open-apis/contact/v3/users/batch_get_id}
+    department-children-url: ${FEISHU_DEPARTMENT_CHILDREN_URL:https://open.feishu.cn/open-apis/contact/v3/departments/%s/children}
+    department-search-url: ${FEISHU_DEPARTMENT_SEARCH_URL:https://open.feishu.cn/open-apis/contact/v3/departments/search}
+    department-users-url: ${FEISHU_DEPARTMENT_USERS_URL:https://open.feishu.cn/open-apis/contact/v3/users/find_by_department}
+    root-department-id: ${FEISHU_ROOT_DEPARTMENT_ID:0}
+    department-id-type: ${FEISHU_DEPARTMENT_ID_TYPE:department_id}
+    user-id-type: ${FEISHU_USER_ID_TYPE:user_id}
+    directory-sync-page-size: ${FEISHU_DIRECTORY_SYNC_PAGE_SIZE:50}
+    state-ttl-seconds: ${FEISHU_STATE_TTL_SECONDS:600}
+
+procurement:
+  order:
+    invoice:
+      storage-dir: ${ORDER_INVOICE_STORAGE_DIR:/app/data/order-invoices}
+  ai:
+    qdrant:
+      enabled: ${QDRANT_ENABLED:false}
+      url: ${QDRANT_URL:http://qdrant:6333}
+      collection-prefix: ${QDRANT_COLLECTION_PREFIX:procurement}
+    dify:
+      enabled: ${DIFY_PROCUREMENT_ENABLED:false}
+      api-key: ${DIFY_PROCUREMENT_API_KEY:}
+      app-type: ${DIFY_PROCUREMENT_APP_TYPE:workflow}
+      workflow-run-url: ${DIFY_PROCUREMENT_WORKFLOW_RUN_URL:https://api.dify.ai/v1/workflows/run}
+      chat-messages-url: ${DIFY_PROCUREMENT_CHAT_MESSAGES_URL:https://api.dify.ai/v1/chat-messages}
+      response-mode: ${DIFY_PROCUREMENT_RESPONSE_MODE:blocking}
+
+integrations:
+  shopping:
+    token: ${SHOPPING_TOOL_TOKEN:}
+
+platform:
+  feedback:
+    storage-dir: ${PLATFORM_FEEDBACK_STORAGE_DIR:/app/data/feedback}

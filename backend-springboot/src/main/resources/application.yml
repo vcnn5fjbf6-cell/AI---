@@ -1,0 +1,126 @@
+server:
+  port: ${SERVER_PORT:8080}
+
+spring:
+  application:
+    name: enterprise-procurement-backend
+  servlet:
+    multipart:
+      max-file-size: 20MB
+      max-request-size: 110MB
+  datasource:
+    url: ${DB_URL:jdbc:mysql://localhost:3306/procurement_platform?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai}
+    username: ${DB_USERNAME:root}
+    password: ${DB_PASSWORD:root}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      timeout: ${REDIS_TIMEOUT:2s}
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: ${MYBATIS_LOG_IMPL:org.apache.ibatis.logging.stdout.StdOutImpl}
+  global-config:
+    db-config:
+      logic-delete-field: is_deleted
+      logic-delete-value: 1
+      logic-not-delete-value: 0
+
+springdoc:
+  api-docs:
+    enabled: true
+  swagger-ui:
+    enabled: true
+
+auth:
+  jwt:
+    secret: ${JWT_SECRET:ChangeThisToALongerAndSaferJwtSecretAtLeast32Bytes}
+    issuer: ${JWT_ISSUER:enterprise-procurement-platform}
+    expire-seconds: ${JWT_EXPIRE_SECONDS:7200}
+    header-name: ${JWT_HEADER_NAME:Authorization}
+    token-prefix: ${JWT_TOKEN_PREFIX:Bearer}
+    clock-skew-seconds: ${JWT_CLOCK_SKEW_SECONDS:60}
+
+feishu:
+  auth:
+    enabled: ${FEISHU_AUTH_ENABLED:false}
+    app-id: ${FEISHU_APP_ID:}
+    app-secret: ${FEISHU_APP_SECRET:}
+    redirect-uri: ${FEISHU_REDIRECT_URI:}
+    authorize-url: ${FEISHU_AUTHORIZE_URL:https://open.feishu.cn/open-apis/authen/v1/index}
+    app-access-token-url: ${FEISHU_APP_ACCESS_TOKEN_URL:https://open.feishu.cn/open-apis/auth/v3/app_access_token/internal}
+    tenant-access-token-url: ${FEISHU_TENANT_ACCESS_TOKEN_URL:https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal}
+    access-token-url: ${FEISHU_ACCESS_TOKEN_URL:https://open.feishu.cn/open-apis/authen/v1/access_token}
+    user-info-url: ${FEISHU_USER_INFO_URL:https://open.feishu.cn/open-apis/authen/v1/user_info}
+    user-detail-url: ${FEISHU_USER_DETAIL_URL:https://open.feishu.cn/open-apis/contact/v3/users/%s}
+    user-batch-get-id-url: ${FEISHU_USER_BATCH_GET_ID_URL:https://open.feishu.cn/open-apis/contact/v3/users/batch_get_id}
+    department-children-url: ${FEISHU_DEPARTMENT_CHILDREN_URL:https://open.feishu.cn/open-apis/contact/v3/departments/%s/children}
+    department-search-url: ${FEISHU_DEPARTMENT_SEARCH_URL:https://open.feishu.cn/open-apis/contact/v3/departments/search}
+    department-users-url: ${FEISHU_DEPARTMENT_USERS_URL:https://open.feishu.cn/open-apis/contact/v3/users/find_by_department}
+    root-department-id: ${FEISHU_ROOT_DEPARTMENT_ID:0}
+    department-id-type: ${FEISHU_DEPARTMENT_ID_TYPE:department_id}
+    user-id-type: ${FEISHU_USER_ID_TYPE:user_id}
+    directory-sync-page-size: ${FEISHU_DIRECTORY_SYNC_PAGE_SIZE:50}
+    state-ttl-seconds: ${FEISHU_STATE_TTL_SECONDS:600}
+  bot:
+    enabled: ${FEISHU_BOT_ENABLED:false}
+    verification-token: ${FEISHU_BOT_VERIFICATION_TOKEN:}
+    message-send-url: ${FEISHU_BOT_MESSAGE_SEND_URL:https://open.feishu.cn/open-apis/im/v1/messages}
+  approval-card:
+    enabled: ${FEISHU_APPROVAL_CARD_ENABLED:false}
+    heartbeat-enabled: ${FEISHU_APPROVAL_CARD_HEARTBEAT_ENABLED:true}
+    long-connection-enabled: ${FEISHU_APPROVAL_CARD_LONG_CONNECTION_ENABLED:false}
+    heartbeat-fixed-delay-ms: ${FEISHU_APPROVAL_CARD_HEARTBEAT_FIXED_DELAY_MS:60000}
+    batch-size: ${FEISHU_APPROVAL_CARD_BATCH_SIZE:20}
+    max-retry-count: ${FEISHU_APPROVAL_CARD_MAX_RETRY_COUNT:5}
+    detail-item-limit: ${FEISHU_APPROVAL_CARD_DETAIL_ITEM_LIMIT:8}
+    receive-id-type: ${FEISHU_APPROVAL_CARD_RECEIVE_ID_TYPE:email}
+    test-recipient-email: ${FEISHU_APPROVAL_CARD_TEST_RECIPIENT_EMAIL:}
+    verification-token: ${FEISHU_APPROVAL_CARD_VERIFICATION_TOKEN:${FEISHU_BOT_VERIFICATION_TOKEN:}}
+    encrypt-key: ${FEISHU_APPROVAL_CARD_ENCRYPT_KEY:}
+    message-send-url: ${FEISHU_APPROVAL_CARD_MESSAGE_SEND_URL:https://open.feishu.cn/open-apis/im/v1/messages}
+    message-patch-url: ${FEISHU_APPROVAL_CARD_MESSAGE_PATCH_URL:https://open.feishu.cn/open-apis/im/v1/messages/%s}
+    app-base-url: ${FEISHU_APPROVAL_CARD_APP_BASE_URL:}
+    system-action-url: ${FEISHU_APPROVAL_CARD_SYSTEM_ACTION_URL:}
+    approval-path: ${FEISHU_APPROVAL_CARD_APPROVAL_PATH:/procurement/approval}
+
+procurement:
+  order:
+    invoice:
+      storage-dir: ${ORDER_INVOICE_STORAGE_DIR:data/order-invoices}
+  ai:
+    qdrant:
+      enabled: ${QDRANT_ENABLED:false}
+      url: ${QDRANT_URL:http://localhost:6333}
+      collection-prefix: ${QDRANT_COLLECTION_PREFIX:procurement}
+    dify:
+      enabled: ${DIFY_PROCUREMENT_ENABLED:false}
+      api-key: ${DIFY_PROCUREMENT_API_KEY:}
+      app-type: ${DIFY_PROCUREMENT_APP_TYPE:workflow}
+      workflow-run-url: ${DIFY_PROCUREMENT_WORKFLOW_RUN_URL:https://api.dify.ai/v1/workflows/run}
+      chat-messages-url: ${DIFY_PROCUREMENT_CHAT_MESSAGES_URL:https://api.dify.ai/v1/chat-messages}
+      response-mode: ${DIFY_PROCUREMENT_RESPONSE_MODE:blocking}
+    m3:
+      enabled: ${M3_VISION_ENABLED:false}
+      base-url: ${M3_BASE_URL:}
+      api-key: ${M3_API_KEY:}
+      model: ${M3_VISION_MODEL:m3-vision}
+      endpoint: ${M3_ENDPOINT:/chat/completions}
+    image:
+      storage-dir: ${PROCUREMENT_AI_IMAGE_STORAGE_DIR:data/procurement-ai-images}
+
+integrations:
+  shopping:
+    token: ${SHOPPING_TOOL_TOKEN:}
+
+platform:
+  feedback:
+    storage-dir: ${PLATFORM_FEEDBACK_STORAGE_DIR:data/feedback}
+
+ehs:
+  enabled: ${EHS_ENABLED:false}
+  public-enabled: ${EHS_PUBLIC_ENABLED:false}

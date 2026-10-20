@@ -1,0 +1,386 @@
+name: Deploy Production (Manual)
+run-name: Production ${{ inputs.release_batch_id }} ${{ inputs.release_sha }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: Type DEPLOY_PRODUCTION to confirm the production release
+        required: true
+        type: string
+      release_sha:
+        description: Exact main commit SHA already verified in the test environment
+        required: true
+        type: string
+      release_batch_id:
+        description: Auditable release batch ID created by the test release center
+        required: true
+        type: string
+      test_run_id:
+        description: Successful test workflow run bound into the release audit and HMAC signature
+        required: true
+        type: string
+      backend_image:
+        description: Exact tested backend GHCR image digest
+        required: true
+        type: string
+      frontend_image:
+        description: Exact tested frontend GHCR image digest
+        required: true
+        type: string
+      release_signature:
+        description: Release control HMAC authorization
+        required: true
+        type: string
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  authorize:
+    name: Authorize exact tested release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      test_run_attempt: ${{ steps.test_run.outputs.test_run_attempt }}
+
+    steps:
+      - name: Verify release request shape
+        env:
+          DEPLOY_CONFIRMATION: ${{ inputs.confirm }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          RELEASE_BATCH_ID: ${{ inputs.release_batch_id }}
+          TEST_RUN_ID: ${{ inputs.test_run_id }}
+          BACKEND_IMAGE: ${{ inputs.backend_image }}
+          FRONTEND_IMAGE: ${{ inputs.frontend_image }}
+          RELEASE_SIGNATURE: ${{ inputs.release_signature }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$DEPLOY_CONFIRMATION" = "DEPLOY_PRODUCTION"
+          printf '%s' "$RELEASE_SHA" | grep -Eq '^[0-9a-f]{40}$'
+          printf '%s' "$RELEASE_BATCH_ID" | grep -Eq '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$'
+          printf '%s' "$TEST_RUN_ID" | grep -Eq '^[1-9][0-9]*$'
+          printf '%s' "$BACKEND_IMAGE" | grep -Eq '^ghcr\.io/dongfanfan94-droid/enterprise-procurement-platform-backend@sha256:[0-9a-f]{64}$'
+          printf '%s' "$FRONTEND_IMAGE" | grep -Eq '^ghcr\.io/dongfanfan94-droid/enterprise-procurement-platform-frontend@sha256:[0-9a-f]{64}$'
+          printf '%s' "$RELEASE_SIGNATURE" | grep -Eq '^[0-9a-f]{64}$'
+
+      - name: Verify successful test workflow identity
+        id: test_run
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        env:
+          TEST_RUN_ID: ${{ inputs.test_run_id }}
+          RELEASE_BATCH_ID: ${{ inputs.release_batch_id }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+        with:
+          script: |
+            const testRunId = Number(process.env.TEST_RUN_ID);
+            const response = await github.rest.actions.getWorkflowRun({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: testRunId
+            });
+            const run = response.data;
+            const expectedTitle = `Release test ${process.env.RELEASE_BATCH_ID} ${process.env.RELEASE_SHA}`;
+            if (
+              run.path !== ".github/workflows/deploy-test.yml" ||
+              run.event !== "workflow_dispatch" ||
+              run.head_branch !== "main" ||
+              run.status !== "completed" ||
+              run.conclusion !== "success" ||
+              run.display_title !== expectedTitle ||
+              !Number.isInteger(run.run_attempt) ||
+              run.run_attempt < 1
+            ) {
+              throw new Error("test workflow identity does not match the authorized release");
+            }
+            core.setOutput("test_run_attempt", String(run.run_attempt));
+
+      - name: Checkout exact release source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ inputs.release_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify immutable main commit
+        env:
+          RELEASE_SHA: ${{ inputs.release_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$RELEASE_SHA" = "$GITHUB_SHA"
+          if git ls-tree -r --full-tree HEAD | awk '$1 == "120000" { found=1 } END { exit(found ? 0 : 1) }'; then
+            echo "Production releases may not contain symbolic links" >&2
+            exit 1
+          fi
+
+  deploy:
+    name: Deploy tested images to production server
+    needs: authorize
+    runs-on: [self-hosted, procurement-prod]
+    timeout-minutes: 360
+    permissions:
+      actions: read
+      contents: read
+      packages: read
+
+    steps:
+      - name: Record production job start
+        run: date +%s > "$RUNNER_TEMP/procurement-production-job-start"
+
+      - name: Checkout exact release source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ inputs.release_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify trusted runner and release signature
+        env:
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          RELEASE_BATCH_ID: ${{ inputs.release_batch_id }}
+          TEST_RUN_ID: ${{ inputs.test_run_id }}
+          BACKEND_IMAGE: ${{ inputs.backend_image }}
+          FRONTEND_IMAGE: ${{ inputs.frontend_image }}
+          RELEASE_SIGNATURE: ${{ inputs.release_signature }}
+        run: |
+          set -euo pipefail
+          runner_guard=/home/caigou/.local/libexec/procurement-actions-runner-guard.sh
+          runner_env=/home/caigou/actions-runner/.env
+          hmac_file=/home/caigou/.config/procurement-release/hmac-secret
+          test -x "$runner_guard"
+          test ! -L "$runner_guard"
+          test "$(stat -c '%a:%U' "$runner_guard")" = "700:caigou"
+          cmp -s deploy/actions-runner-job-guard.sh "$runner_guard"
+          test ! -L "$runner_env"
+          test "$(stat -c '%a:%U' "$runner_env")" = "600:caigou"
+          grep -Fx 'PROCUREMENT_RUNNER_ROLE=production' "$runner_env"
+          grep -Fx "ACTIONS_RUNNER_HOOK_JOB_STARTED=$runner_guard" "$runner_env"
+          test -f "$hmac_file"
+          test ! -L "$hmac_file"
+          test "$(stat -c '%a:%U' "$hmac_file")" = "600:caigou"
+          python3 - "$hmac_file" <<'PY'
+          import hashlib
+          import hmac
+          import os
+          import sys
+
+          with open(sys.argv[1], encoding="utf-8") as handle:
+              secret = handle.read().rstrip("\n")
+          if len(secret) < 32 or "\r" in secret or "\n" in secret:
+              raise SystemExit("production HMAC file is invalid")
+          message = ":".join((
+              os.environ["RELEASE_BATCH_ID"],
+              os.environ["RELEASE_SHA"],
+              os.environ["BACKEND_IMAGE"],
+              os.environ["FRONTEND_IMAGE"],
+              os.environ["TEST_RUN_ID"],
+          )).encode()
+          expected = hmac.new(secret.encode(), message, hashlib.sha256).hexdigest()
+          if not hmac.compare_digest(expected, os.environ["RELEASE_SIGNATURE"]):
+              raise SystemExit("release signature verification failed")
+          PY
+
+      - name: Verify immutable main commit
+        env:
+          RELEASE_SHA: ${{ inputs.release_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$RELEASE_SHA" = "$GITHUB_SHA"
+          if git ls-tree -r --full-tree HEAD | awk '$1 == "120000" { found=1 } END { exit(found ? 0 : 1) }'; then
+            echo "Production releases may not contain symbolic links" >&2
+            exit 1
+          fi
+
+      - name: Verify production baseline before image transfer
+        env:
+          RELEASE_SHA: ${{ inputs.release_sha }}
+        run: |
+          set -euo pipefail
+          bash deploy/verify_production_baseline.sh >/dev/null
+
+      - name: Prepare verified candidate image cache
+        id: candidate_cache_prepare
+        continue-on-error: true
+        env:
+          TEST_RUN_ID: ${{ inputs.test_run_id }}
+          TEST_RUN_ATTEMPT: ${{ needs.authorize.outputs.test_run_attempt }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$TEST_RUN_ID" | grep -Eq '^[1-9][0-9]*$'
+          printf '%s' "$TEST_RUN_ATTEMPT" | grep -Eq '^[1-9][0-9]*$'
+          cache_root="$GITHUB_WORKSPACE/.release-cache"
+          archive_dir="$cache_root/procurement-candidate-images-${TEST_RUN_ID}-${TEST_RUN_ATTEMPT}"
+          if [ -L "$cache_root" ] || [ -L "$archive_dir" ]; then
+            echo "Candidate cache directory may not be a symbolic link" >&2
+            exit 1
+          fi
+          rm -rf -- "$cache_root"
+          install -d -m 0700 "$archive_dir"
+
+      - name: Restore verified candidate image cache
+        id: candidate_cache_restore
+        if: steps.candidate_cache_prepare.outcome == 'success'
+        continue-on-error: true
+        timeout-minutes: 20
+        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: .release-cache/procurement-candidate-images-${{ inputs.test_run_id }}-${{ needs.authorize.outputs.test_run_attempt }}
+          key: candidate-images-${{ inputs.test_run_id }}-${{ needs.authorize.outputs.test_run_attempt }}-${{ inputs.release_sha }}
+          fail-on-cache-miss: false
+
+      - name: Report production candidate cache fallback
+        if: always() && (steps.candidate_cache_prepare.outcome != 'success' || steps.candidate_cache_restore.outcome != 'success' || steps.candidate_cache_restore.outputs.cache-hit != 'true')
+        run: echo "::warning title=Production candidate cache unavailable::Production will fall back to the exact GHCR digests."
+
+      - name: Load verified candidate image cache
+        id: candidate_cache_load
+        if: steps.candidate_cache_restore.outcome == 'success' && steps.candidate_cache_restore.outputs.cache-hit == 'true'
+        continue-on-error: true
+        timeout-minutes: 10
+        env:
+          TEST_RUN_ID: ${{ inputs.test_run_id }}
+          TEST_RUN_ATTEMPT: ${{ needs.authorize.outputs.test_run_attempt }}
+          CANDIDATE_SHA: ${{ inputs.release_sha }}
+          BACKEND_IMAGE: ${{ inputs.backend_image }}
+          FRONTEND_IMAGE: ${{ inputs.frontend_image }}
+        run: |
+          set -Eeuo pipefail
+          cache_root="$GITHUB_WORKSPACE/.release-cache"
+          archive_dir="$cache_root/procurement-candidate-images-${TEST_RUN_ID}-${TEST_RUN_ATTEMPT}"
+          archive_path="$archive_dir/candidate-images.tar.gz"
+          backend_repository="${BACKEND_IMAGE%@*}"
+          frontend_repository="${FRONTEND_IMAGE%@*}"
+          backend_tag="${backend_repository}:test-${CANDIDATE_SHA}"
+          frontend_tag="${frontend_repository}:test-${CANDIDATE_SHA}"
+          cleanup_failed_archive() {
+            docker image rm "$backend_tag" "$frontend_tag" >/dev/null 2>&1 || true
+            rm -rf -- "$cache_root"
+          }
+          trap cleanup_failed_archive ERR
+
+          python3 deploy/verify_candidate_image_archive.py \
+            --archive-dir "$archive_dir" \
+            --candidate-sha "$CANDIDATE_SHA" \
+            --backend-image "$BACKEND_IMAGE" \
+            --frontend-image "$FRONTEND_IMAGE"
+          docker load --input "$archive_path"
+          docker image inspect "$backend_tag" >/dev/null
+          docker image inspect "$frontend_tag" >/dev/null
+          rm -rf -- "$cache_root"
+          trap - ERR
+
+      - name: Report production candidate cache rejection
+        if: always() && steps.candidate_cache_restore.outcome == 'success' && steps.candidate_cache_restore.outputs.cache-hit == 'true' && steps.candidate_cache_load.outcome != 'success'
+        run: echo "::warning title=Production candidate cache rejected::Cache cleanup completed; production will fall back to the exact GHCR digests."
+
+      - name: Pull exact tested images
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+          BACKEND_IMAGE: ${{ inputs.backend_image }}
+          FRONTEND_IMAGE: ${{ inputs.frontend_image }}
+          CANDIDATE_CACHE_LOADED: ${{ steps.candidate_cache_load.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          pull_started="$(date +%s)"
+          export DOCKER_CONFIG="$RUNNER_TEMP/procurement-production-ghcr"
+          rm -rf -- "$DOCKER_CONFIG"
+          install -d -m 0700 "$DOCKER_CONFIG"
+          cleanup_registry_auth() {
+            docker logout ghcr.io >/dev/null 2>&1 || true
+            rm -rf -- "$DOCKER_CONFIG"
+          }
+          trap cleanup_registry_auth EXIT
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          bash deploy/pull_immutable_images.sh
+          cleanup_registry_auth
+          trap - EXIT
+          pull_elapsed=$(( $(date +%s) - pull_started ))
+          {
+            echo "### Production image transport"
+            echo "- Verified candidate cache loaded: $CANDIDATE_CACHE_LOADED"
+            echo "- Exact GHCR digest registration: ${pull_elapsed}s"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Deploy exact tested release
+        env:
+          DEPLOY_UPLOAD_ENV: "0"
+          DEPLOY_FORWARD_TIMEOUT_SECONDS: "7200"
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          RELEASE_BATCH_ID: ${{ inputs.release_batch_id }}
+          BACKEND_IMAGE: ${{ inputs.backend_image }}
+          FRONTEND_IMAGE: ${{ inputs.frontend_image }}
+        run: |
+          set -euo pipefail
+          job_started="$(cat "$RUNNER_TEMP/procurement-production-job-start")"
+          case "$job_started" in
+            ""|*[!0-9]*)
+              echo "Production job start timestamp is invalid" >&2
+              exit 1
+              ;;
+          esac
+          elapsed_seconds=$(( $(date +%s) - job_started ))
+          if [ "$elapsed_seconds" -gt 5400 ]; then
+            echo "Production preparation exceeded 90 minutes; refusing to enter the maintenance window." >&2
+            exit 1
+          fi
+          command -v setsid >/dev/null
+          exec setsid --wait -- bash deploy/deploy_local_runner.sh
+
+      - name: Remove registry credentials
+        if: always()
+        run: rm -rf -- "$RUNNER_TEMP/procurement-production-ghcr" "$RUNNER_TEMP/procurement-production-job-start" "$GITHUB_WORKSPACE/.release-cache"
+
+  cleanup_successful_cache:
+    name: Delete candidate image cache after production success
+    needs:
+      - authorize
+      - deploy
+    if: needs.deploy.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+      contents: read
+
+    steps:
+      - name: Delete exact released candidate cache
+        id: cleanup
+        continue-on-error: true
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        env:
+          CANDIDATE_CACHE_KEY: candidate-images-${{ inputs.test_run_id }}-${{ needs.authorize.outputs.test_run_attempt }}-${{ inputs.release_sha }}
+        with:
+          script: |
+            const cacheKey = process.env.CANDIDATE_CACHE_KEY || "";
+            if (!/^candidate-images-[1-9][0-9]*-[1-9][0-9]*-[0-9a-f]{40}$/.test(cacheKey)) {
+              throw new Error("candidate cache key is invalid");
+            }
+            const response = await github.rest.actions.getActionsCacheList({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              key: cacheKey,
+              per_page: 100
+            });
+            const matches = response.data.actions_caches.filter(cache => cache.key === cacheKey);
+            for (const cache of matches) {
+              await github.rest.actions.deleteActionsCacheById({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                cache_id: cache.id
+              });
+            }
+            core.info(`Deleted ${matches.length} released candidate cache entr${matches.length === 1 ? 'y' : 'ies'}.`);
+
+      - name: Report released candidate cache cleanup
+        if: always() && steps.cleanup.outcome != 'success'
+        run: echo "::warning title=Released candidate cache cleanup failed::The cache will remain until normal GitHub eviction."

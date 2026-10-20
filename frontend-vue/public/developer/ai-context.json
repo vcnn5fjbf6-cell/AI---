@@ -1,0 +1,212 @@
+{
+  "id": "enterprise-procurement-platform-developer-context",
+  "schemaVersion": "1.0",
+  "language": "zh-CN",
+  "scope": "internal-development",
+  "verifiedDate": "2026-07-27",
+  "containsSecrets": false,
+  "sourcePrecedence": [
+    "当前任务要求与仓库根目录 AGENTS.md",
+    "目标提交中的源码、路由、菜单、SQL 和部署配置",
+    "当前部署版本生成的 /v3/api-docs",
+    "docs/DEVELOPMENT_GUIDE.md 与 docs/MODULE_DEVELOPMENT_GUIDE.md",
+    "docs/system-architecture-by-module.md",
+    "docs/backend-api-routes.csv 静态快照"
+  ],
+  "technology": {
+    "frontend": [
+      "Vue 3",
+      "TypeScript",
+      "Vite 8",
+      "Vue Router 4",
+      "Pinia",
+      "Element Plus"
+    ],
+    "backend": [
+      "Spring Boot 3",
+      "MyBatis Plus",
+      "MySQL 8",
+      "JWT",
+      "Spring Validation"
+    ],
+    "deployment": "Docker Compose，测试与生产边界独立"
+  },
+  "repository": {
+    "frontend": "frontend-vue/src/",
+    "backend": "backend-springboot/src/main/java/com/company/procurement/",
+    "database": "backend-springboot/sql/",
+    "deployment": "deploy/",
+    "documentation": "docs/",
+    "activeFrontendRoutes": "frontend-vue/src/router/index.ts"
+  },
+  "applications": [
+    {
+      "appCode": "PROCUREMENT",
+      "scope": "采购、审批、报价和订单"
+    },
+    {
+      "appCode": "MAINTENANCE",
+      "scope": "维保业务"
+    },
+    {
+      "appCode": "PLATFORM",
+      "scope": "平台、用户、权限和管理能力",
+      "isWildcard": false
+    },
+    {
+      "appCode": "EHS",
+      "scope": "EHS 测试环境条件模块",
+      "environment": "TEST",
+      "conditionallyEnabled": true,
+      "productionStatusImplied": false
+    }
+  ],
+  "moduleIntegration": {
+    "decisionFirst": [
+      "扩展现有模块",
+      "新增独立业务应用"
+    ],
+    "newApplicationRequiresReview": true,
+    "minimumDeliverables": [
+      "module-manifest",
+      "后端 Controller、Service、请求响应模型和测试",
+      "前端 API、类型、页面、路由和菜单",
+      "应用准入、操作权限和对象/数据范围",
+      "必要的幂等 zz_*.sql",
+      "OpenAPI、人工验收用例和文档"
+    ]
+  },
+  "accessControl": {
+    "layers": [
+      "菜单目标应用",
+      "路由 meta.appCode 或 anyAppCodes",
+      "后端 API 应用准入和操作权限",
+      "Service 对象与数据范围"
+    ],
+    "frontendIsNotSecurityBoundary": true,
+    "frontendRolesAndPermissionsRelation": "OR",
+    "emptyRolesPassesFrontendRoleGate": true,
+    "requiredFrontendCheck": "npm.cmd run check:access",
+    "rules": [
+      "roles 为空时不能依靠 permissions 收窄菜单或路由入口",
+      "角色、应用准入、操作权限和对象范围不能互相替代",
+      "直接 URL、工作台、详情、审批、关注、导出都要后端校验",
+      "后端不得信任前端传入的用户、部门、供应商或范围标识"
+    ]
+  },
+  "workflow": {
+    "mustReuseExisting": true,
+    "preferredServices": [
+      "PurchaseRequestService",
+      "WorkflowService"
+    ],
+    "rules": [
+      "复用现有审批任务、状态与审计记录",
+      "飞书和 AI 仅作为输入、交互、提醒或建议层",
+      "禁止直接 SQL 改状态、影子状态、旁路表和绕过服务的外部回调",
+      "新增流程分支或状态机前必须取得业务确认"
+    ]
+  },
+  "databaseMigration": {
+    "destructiveLocalSchema": "backend-springboot/sql/schema.sql",
+    "destructiveSchemaAllowedOnlyOnDisposableLocalDatabase": true,
+    "flywayEnabled": false,
+    "regularMigrationPattern": "backend-springboot/sql/zz_*.sql",
+    "orderedByFilename": true,
+    "appendOnly": true,
+    "idempotentRequired": true,
+    "runWholeSqlDirectory": false,
+    "manualAndRollbackAreRegularMigrations": false
+  },
+  "openapi": {
+    "localJson": "http://localhost:8080/v3/api-docs",
+    "localSwagger": "http://localhost:8080/swagger-ui/index.html",
+    "testJson": "/v3/api-docs",
+    "testSwagger": "/swagger-ui/index.html",
+    "authorizationScheme": "bearerAuth",
+    "swaggerReadsPlatformLocalStorage": false,
+    "firstAuthenticatedSmokeEndpoint": "GET /api/auth/me",
+    "responseEnvelope": [
+      "success",
+      "code",
+      "message",
+      "data"
+    ],
+    "businessFailuresMayUseHttp200": true,
+    "successCondition": "success=true and code=0",
+    "productionEnabledByDefault": false,
+    "staticRouteCsvIsAuthoritative": false
+  },
+  "verification": {
+    "hardGateCommands": [
+      {
+        "workingDirectory": "backend-springboot",
+        "command": "mvn.cmd -q -DskipTests compile"
+      },
+      {
+        "workingDirectory": "backend-springboot",
+        "command": "mvn.cmd test"
+      },
+      {
+        "workingDirectory": "frontend-vue",
+        "command": "npm.cmd ci"
+      },
+      {
+        "workingDirectory": "frontend-vue",
+        "command": "npm.cmd run typecheck"
+      },
+      {
+        "workingDirectory": "frontend-vue",
+        "command": "npm.cmd run check:access"
+      },
+      {
+        "workingDirectory": "frontend-vue",
+        "command": "npm.cmd run build"
+      },
+      {
+        "workingDirectory": ".",
+        "command": "git diff --check"
+      }
+    ],
+    "additionalGates": [
+      "改动相关测试",
+      "秘密与敏感信息扫描",
+      "数据库增量审查",
+      "OpenAPI 变化审查",
+      "PR 构建检查",
+      "受影响角色、无权限角色和对象范围人工验收"
+    ],
+    "frontendBuildIncludesAccessCheck": false,
+    "postDeploySmokeReplacesPreDeployGate": false
+  },
+  "environments": {
+    "test": {
+      "purpose": [
+        "团队联调",
+        "接口调试",
+        "业务验收"
+      ],
+      "isolatedFromProduction": true,
+      "releaseProcedureSource": "仓库当前 CI/部署配置和维护者说明"
+    },
+    "production": {
+      "explicitUserIntentRequired": true,
+      "testSuccessIsAuthorization": false,
+      "useVerifiedCommitAndImmutableArtifacts": true
+    }
+  },
+  "forbiddenContent": [
+    "密码、令牌、密钥、会话值或真实 .env",
+    "生产数据或个人信息",
+    "群组标识或真实网络地址",
+    "可直接登录的共享测试账号",
+    "把规划接口、示例模块或静态快照描述为已上线事实"
+  ],
+  "relatedFiles": [
+    "/developer/ai-context.md",
+    "/developer/module-manifest.schema.json",
+    "/developer/module-manifest.example.json",
+    "/developer/pr-checklist.md",
+    "docs/MODULE_DEVELOPMENT_GUIDE.md"
+  ]
+}

@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light">
+    <title>上线管理</title>
+    <link rel="stylesheet" href="/assets/app.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="topbar-title">
+        <div class="title-line">
+          <h1>上线批次</h1>
+          <span class="environment-badge"><span aria-hidden="true"></span>测试环境</span>
+        </div>
+        <p class="subtitle">选择更新、创建批次、完成组合测试后再确认上线。</p>
+      </div>
+      <button id="refresh-button" class="button secondary" type="button">刷新数据</button>
+    </header>
+
+    <main>
+      <div id="notice" class="notice hidden" role="status"></div>
+
+      <section class="panel" aria-labelledby="active-title">
+        <div class="section-heading">
+          <div>
+            <h2 id="active-title">当前上线批次</h2>
+          </div>
+        </div>
+        <div id="active-batch" class="empty">正在读取批次状态…</div>
+      </section>
+
+      <section class="panel" aria-labelledby="candidate-title">
+        <div class="section-heading">
+          <div>
+            <h2 id="candidate-title">可上线更新</h2>
+            <p id="candidate-summary" class="hint">正在读取候选更新…</p>
+          </div>
+        </div>
+        <div class="module-controls" aria-label="按模块筛选更新">
+          <div id="module-filter-list" class="module-filter-list"></div>
+          <div class="selection-tools">
+            <button id="select-visible-button" class="button secondary compact" type="button" disabled>全选当前筛选</button>
+            <button id="clear-selection-button" class="button text compact" type="button" disabled>清空选择</button>
+          </div>
+        </div>
+        <div class="selection-bar">
+          <div class="selection-info">
+            <strong id="selected-count">已选 0 项</strong>
+            <span id="selected-help">请先勾选需要上线的更新</span>
+          </div>
+          <button id="create-button" class="button primary create-button" type="button" disabled>创建批次并开始组合测试</button>
+        </div>
+        <div class="candidate-table-head" aria-hidden="true">
+          <span>选择</span>
+          <span>更新内容</span>
+          <span>检查状态</span>
+        </div>
+        <div id="candidate-list" class="candidate-list"></div>
+      </section>
+
+      <section class="panel" aria-labelledby="history-title">
+        <div class="section-heading">
+          <div>
+            <h2 id="history-title">历史批次</h2>
+          </div>
+        </div>
+        <div id="batch-history" class="history-list"></div>
+      </section>
+    </main>
+
+    <footer>仓库专属 GitHub App 凭据仅保存在控制面；页面不会读取或保存发布凭据。</footer>
+    <script src="/assets/app.js" defer></script>
+  </body>
+</html>

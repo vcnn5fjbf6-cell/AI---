@@ -1,0 +1,71 @@
+name: procurement-release-control
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: "5"
+
+services:
+  release-control:
+    build:
+      context: ./release-agent
+      dockerfile: Dockerfile
+    image: ${RELEASE_CONTROL_IMAGE:-procurement-release-control:local}
+    restart: unless-stopped
+    init: true
+    environment:
+      RELEASE_AGENT_PORT: 8080
+      RELEASE_AGENT_STATE_FILE: /data/state.json
+      RELEASE_AGENT_POLL_INTERVAL_MS: ${RELEASE_AGENT_POLL_INTERVAL_MS:-10000}
+      RELEASE_WORKFLOW_RUN_TIMEOUT_MS: ${RELEASE_WORKFLOW_RUN_TIMEOUT_MS:-300000}
+      RELEASE_ADMIN_USERNAME: ${RELEASE_ADMIN_USERNAME:?RELEASE_ADMIN_USERNAME is required}
+      RELEASE_ADMIN_PASSWORD: ${RELEASE_ADMIN_PASSWORD:?RELEASE_ADMIN_PASSWORD is required}
+      RELEASE_GITHUB_APP_ID: ${RELEASE_GITHUB_APP_ID:-}
+      RELEASE_GITHUB_APP_INSTALLATION_ID: ${RELEASE_GITHUB_APP_INSTALLATION_ID:-}
+      RELEASE_GITHUB_APP_PRIVATE_KEY_B64: ${RELEASE_GITHUB_APP_PRIVATE_KEY_B64:-}
+      RELEASE_PRODUCTION_HMAC_SECRET: ${RELEASE_PRODUCTION_HMAC_SECRET:-}
+      RELEASE_RUNNERS_ISOLATED: ${RELEASE_RUNNERS_ISOLATED:-false}
+      RELEASE_CLEAN_BATCH_DATABASE_READY: ${RELEASE_CLEAN_BATCH_DATABASE_READY:-false}
+      RELEASE_GITHUB_OWNER: ${RELEASE_GITHUB_OWNER:-dongfanfan94-droid}
+      RELEASE_GITHUB_REPO: ${RELEASE_GITHUB_REPO:-enterprise-procurement-platform}
+      RELEASE_GITHUB_MAIN_BRANCH: main
+      RELEASE_GITHUB_TEST_WORKFLOW: deploy-test.yml
+      RELEASE_GITHUB_PRODUCTION_WORKFLOW: deploy.yml
+      RELEASE_TEST_STATUS_FILE: /test-status/current-build-ref
+      RELEASE_CONTROL_FRAME_ANCESTORS: ${RELEASE_CONTROL_FRAME_ANCESTORS:-https://procurement-test-151.tailb89388.ts.net http://100.100.226.27:18080 http://192.168.132.151:18080 http://127.0.0.1:18080}
+    ports:
+      - ${RELEASE_CONTROL_BIND_ADDRESS:-127.0.0.1}:${RELEASE_CONTROL_HTTP_PORT:-18081}:8080
+    volumes:
+      - release_control_state:/data
+      - type: bind
+        source: ${RELEASE_TEST_STATUS_DIR:-/opt/procurement-test/deploy/test-status}
+        target: /test-status
+        read_only: true
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1:8080/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - release_egress
+    mem_limit: ${RELEASE_CONTROL_MEMORY:-256m}
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    logging: *default-logging
+
+networks:
+  release_egress:
+
+volumes:
+  release_control_state:

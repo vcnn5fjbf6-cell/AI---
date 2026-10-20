@@ -1,0 +1,83 @@
+package com.company.procurement.modules.procurement.order.vo;
+
+import lombok.Data;
+
+import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+
+@Data
+public class ProcurementOrderVO {
+
+    private Long quoteItemId;
+    private Long quoteId;
+    private Long purchaseRequestId;
+    private Long purchaseRequestItemId;
+    private Long sourceRequestId;
+    private String sourceReqNo;
+    private String sourceReqTitle;
+    private String sourceReqType;
+    private String aggregateReqNo;
+    private Long supplierId;
+    private String supplierName;
+    private Long applicantUserId;
+    private String applicantName;
+    private Long purchaserUserId;
+    private String purchaserName;
+    private String orderNo;
+    private String reqNo;
+    private String reqTitle;
+    private String reqType;
+    private String deptName;
+    private Integer lineNo;
+    private String itemCode;
+    private String itemName;
+    private String specModel;
+    private String unit;
+    private BigDecimal qty;
+    private BigDecimal unitPrice;
+    private BigDecimal lineAmount;
+    private Integer leadTimeDays;
+    private String quoteRemark;
+    private String receivingCity;
+    private String deliveryAddress;
+    private Integer quoteReplacementFlag;
+    private LocalDate needDate;
+    private LocalDateTime orderTime;
+    private String supplierConfirmStatus;
+    private LocalDateTime supplierConfirmedAt;
+    private String orderStatus;
+    private String receiptStatus;
+    private LocalDateTime receiptDueAt;
+    private Long receivedBy;
+    private LocalDateTime receivedAt;
+    private String receiptRemark;
+    private Integer autoReceived;
+    private LocalDateTime noReasonReturnDeadline;
+    private LocalDateTime returnExchangeDeadline;
+    private Boolean afterSaleAllowed;
+    private Boolean noReasonReturnAvailable;
+    private Boolean returnExchangeAvailable;
+    private Long latestAfterSaleId;
+    private String latestAfterSaleNo;
+    private String latestAfterSaleType;
+    private String latestAfterSaleStatus;
+    private String latestAfterSaleReason;
+    private String replacementItemCode;
+    private String replacementItemName;
+    private String replacementSpecModel;
+    private String replacementUnit;
+    private String latestApprovalRemark;
+    private OrderInvoiceSummaryVO latestInvoice;
+    private OrderInvoiceSummaryVO latestDeliveryNote;
+    private Boolean canViewInvoice;
+    private Boolean canUploadInvoice;
+    private Boolean canReviewInvoice;
+    private Boolean canViewOrderDocuments;
+    private Boolean canUploadDeliveryNote;
+    private Boolean canReviewOrderDocuments;
+    private Boolean canExportOrder;
+    private Boolean canConfirmReceipt;
+    private Boolean canApplyAfterSale;
+    private Boolean canConfirmAfterSaleProposal;
+}

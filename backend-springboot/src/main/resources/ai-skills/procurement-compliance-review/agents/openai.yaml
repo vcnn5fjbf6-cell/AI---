@@ -1,0 +1,4 @@
+interface:
+  display_name: "采购合规审查"
+  short_description: "依据采购规则和真实业务场景判断申请理由、合规风险并生成审批建议"
+  default_prompt: "Use $procurement-compliance-review to review a procurement request and return a structured compliance recommendation."

@@ -1,0 +1,137 @@
+{
+  "schemaVersion": "1.0",
+  "moduleCode": "EXAMPLE_INSPECTION",
+  "displayName": "示例巡检模块",
+  "summary": "仅演示独立业务模块如何声明前后端、权限、数据和测试接入，不代表该功能已获批或上线。",
+  "status": "PLANNED",
+  "exampleOnly": true,
+  "application": {
+    "mode": "NEW_APPLICATION",
+    "appCode": "INSPECTION",
+    "appCodeStatus": "PROPOSED",
+    "workbenchSources": [
+      "INSPECTION_TASK"
+    ]
+  },
+  "frontend": {
+    "pages": [
+      "frontend-vue/src/pages/inspection/InspectionListPage.vue"
+    ],
+    "apiFiles": [
+      "frontend-vue/src/api/inspection.ts"
+    ],
+    "routes": [
+      {
+        "path": "/inspection/tasks",
+        "page": "frontend-vue/src/pages/inspection/InspectionListPage.vue",
+        "appCodes": [
+          "INSPECTION"
+        ],
+        "roles": [
+          "SUPER_ADMIN"
+        ],
+        "permissions": [
+          "inspection_task:view"
+        ]
+      }
+    ],
+    "menuEntries": [
+      {
+        "key": "inspection-tasks",
+        "label": "巡检任务",
+        "path": "/inspection/tasks",
+        "appCodes": [
+          "INSPECTION"
+        ],
+        "roles": [
+          "SUPER_ADMIN"
+        ],
+        "permissions": [
+          "inspection_task:view"
+        ]
+      }
+    ]
+  },
+  "backend": {
+    "packageRoot": "backend-springboot/src/main/java/com/company/procurement/modules/inspection/",
+    "apiPrefixes": [
+      "/api/inspection"
+    ],
+    "controllers": [
+      "backend-springboot/src/main/java/com/company/procurement/modules/inspection/controller/InspectionTaskController.java"
+    ],
+    "services": [
+      "backend-springboot/src/main/java/com/company/procurement/modules/inspection/service/InspectionTaskService.java"
+    ],
+    "requiredAppCodes": [
+      "INSPECTION"
+    ],
+    "permissionCodes": [
+      "inspection_task:view",
+      "inspection_task:manage"
+    ],
+    "objectScopeChecks": [
+      "Service 根据当前用户可管理的区域反查任务，不能信任请求中的区域标识。",
+      "详情、修改、导出使用同一对象范围判断。"
+    ]
+  },
+  "database": {
+    "required": false,
+    "migrationFiles": [],
+    "idempotent": true,
+    "destructive": false,
+    "dataRepairScope": "示例不包含数据修复。",
+    "recoveryEvidence": "示例不写数据库；真实模块按受影响记录或备份表说明恢复依据。"
+  },
+  "workflow": {
+    "touchesWorkflow": false,
+    "reusesExistingServices": true,
+    "entryServices": [],
+    "statesReused": [],
+    "auditRecordsReused": [],
+    "newBranchApproved": false
+  },
+  "verification": {
+    "backendTests": [
+      "mvn.cmd test"
+    ],
+    "frontendChecks": [
+      "npm.cmd run typecheck",
+      "npm.cmd run check:access",
+      "npm.cmd run build"
+    ],
+    "manualCases": [
+      "有准入且有查看权限的账号可以打开任务列表。",
+      "无 INSPECTION 准入的账号不能通过直接 URL 或 API 访问。",
+      "有准入但超出对象范围的账号不能读取其他区域任务。"
+    ],
+    "accessCheckPassed": false,
+    "secretScanPassed": false,
+    "openapiReviewed": false,
+    "prBuildPassed": false
+  },
+  "documentation": {
+    "files": [
+      "docs/MODULE_DEVELOPMENT_GUIDE.md"
+    ],
+    "openapiUpdated": false,
+    "behaviorDocsUpdated": false
+  },
+  "security": {
+    "containsSecrets": false,
+    "requiresProductionAccess": false,
+    "sensitiveFields": [
+      "任务附件",
+      "处理人身份"
+    ]
+  },
+  "release": {
+    "target": "TEST",
+    "productionAuthorized": false,
+    "postDeploySmoke": [
+      "首页与登录正常。",
+      "OpenAPI 可读取新接口。",
+      "有权限、无权限和越界对象三类账号结果符合预期。"
+    ]
+  }
+}

@@ -1,0 +1,568 @@
+name: Deploy Trusted Release Control
+run-name: Release control ${{ github.sha }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      reset_admin_password:
+        description: Reset the host-managed release administrator password from the one-time repository secret
+        required: false
+        default: false
+        type: boolean
+      configure_test_feishu_notifications:
+        description: Apply the one-time host-managed test Feishu notification configuration
+        required: false
+        default: false
+        type: boolean
+      reconcile_test_gitee_deployment:
+        description: Reconcile the isolated test environment with the current Gitee main deployment
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: procurement-release-control
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: Package trusted main for the isolated runner
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      source_archive_sha256: ${{ steps.archive.outputs.source_archive_sha256 }}
+
+    steps:
+      - name: Checkout trusted main on GitHub-hosted runner
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.sha }}
+          path: trusted
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify and package immutable main source
+        id: archive
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$(git -C trusted rev-parse HEAD)" = "$SOURCE_SHA"
+          printf '%s' "$SOURCE_SHA" | grep -Eq '^[0-9a-f]{40}$'
+          if git -C trusted ls-tree -r --full-tree HEAD | awk '$1 == "120000" { found=1 } END { exit(found ? 0 : 1) }'; then
+            echo "Trusted source may not contain symbolic links" >&2
+            exit 1
+          fi
+
+          umask 077
+          cache_root="$GITHUB_WORKSPACE/.release-source"
+          archive_dir="$cache_root/procurement-release-control-source-${GITHUB_RUN_ID}"
+          rm -rf -- "$cache_root"
+          install -d -m 0700 "$archive_dir"
+          git -C trusted archive --format=tar "$SOURCE_SHA" |
+            gzip -n -1 > "$archive_dir/source.tar.gz"
+          test -s "$archive_dir/source.tar.gz"
+          source_archive_sha256="$(sha256sum "$archive_dir/source.tar.gz" | awk '{print $1}')"
+          printf '%s' "$source_archive_sha256" | grep -Eq '^[0-9a-f]{64}$'
+          printf '%s\n' \
+            'schema_version=1' \
+            "source_sha=$SOURCE_SHA" \
+            "archive_sha256=$source_archive_sha256" \
+            > "$archive_dir/source.manifest"
+          echo "source_archive_sha256=$source_archive_sha256" >> "$GITHUB_OUTPUT"
+
+      - name: Save trusted source cache
+        uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: .release-source/procurement-release-control-source-${{ github.run_id }}
+          key: release-control-source-${{ github.run_id }}-${{ github.sha }}
+
+  deploy:
+    name: Deploy trusted control plane to procurement-151
+    needs: package
+    if: github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, procurement-test]
+    timeout-minutes: 40
+    permissions:
+      actions: read
+      contents: read
+    defaults:
+      run:
+        working-directory: trusted
+
+    steps:
+      - name: Prepare trusted source cache
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          cache_root="$GITHUB_WORKSPACE/.release-source"
+          trusted_root="$GITHUB_WORKSPACE/trusted"
+          if [ -L "$cache_root" ] || [ -L "$trusted_root" ]; then
+            echo "Trusted source paths may not be symbolic links" >&2
+            exit 1
+          fi
+          rm -rf -- "$cache_root" "$trusted_root"
+          install -d -m 0700 "$cache_root/procurement-release-control-source-${GITHUB_RUN_ID}"
+
+      - name: Restore exact trusted source cache
+        id: source_cache
+        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: .release-source/procurement-release-control-source-${{ github.run_id }}
+          key: release-control-source-${{ github.run_id }}-${{ github.sha }}
+
+      - name: Verify and extract trusted source cache
+        working-directory: ${{ github.workspace }}
+        env:
+          EXPECTED_ARCHIVE_SHA256: ${{ needs.package.outputs.source_archive_sha256 }}
+          EXPECTED_SOURCE_SHA: ${{ github.sha }}
+          SOURCE_CACHE_HIT: ${{ steps.source_cache.outputs.cache-hit }}
+        run: |
+          set -euo pipefail
+          test "$SOURCE_CACHE_HIT" = "true"
+          printf '%s' "$EXPECTED_SOURCE_SHA" | grep -Eq '^[0-9a-f]{40}$'
+          printf '%s' "$EXPECTED_ARCHIVE_SHA256" | grep -Eq '^[0-9a-f]{64}$'
+          archive_dir="$GITHUB_WORKSPACE/.release-source/procurement-release-control-source-${GITHUB_RUN_ID}"
+          archive="$archive_dir/source.tar.gz"
+          manifest="$archive_dir/source.manifest"
+          trusted_root="$GITHUB_WORKSPACE/trusted"
+          test -f "$archive" && test ! -L "$archive"
+          test -f "$manifest" && test ! -L "$manifest"
+          test "$(stat -c '%U' "$archive")" = "ceshi"
+          test "$(stat -c '%U' "$manifest")" = "ceshi"
+          actual_archive_sha256="$(sha256sum "$archive" | awk '{print $1}')"
+          test "$actual_archive_sha256" = "$EXPECTED_ARCHIVE_SHA256"
+
+          python3 - "$manifest" "$archive" "$trusted_root" "$EXPECTED_SOURCE_SHA" "$EXPECTED_ARCHIVE_SHA256" <<'PY'
+          import os
+          import pathlib
+          import shutil
+          import sys
+          import tarfile
+
+          manifest_path, archive_path, destination, expected_source_sha, expected_archive_sha256 = sys.argv[1:]
+          expected_manifest = [
+              "schema_version=1",
+              f"source_sha={expected_source_sha}",
+              f"archive_sha256={expected_archive_sha256}",
+          ]
+          with open(manifest_path, encoding="utf-8") as handle:
+              if handle.read().splitlines() != expected_manifest:
+                  raise SystemExit("trusted source manifest does not match this workflow run")
+
+          root = pathlib.Path(destination)
+          root.mkdir(mode=0o700)
+          root_resolved = root.resolve()
+          seen = set()
+          total_size = 0
+          with tarfile.open(archive_path, mode="r:gz") as archive:
+              members = archive.getmembers()
+              if not members or len(members) > 50000:
+                  raise SystemExit("trusted source archive has an invalid entry count")
+              for member in members:
+                  relative = pathlib.PurePosixPath(member.name)
+                  if relative.is_absolute() or not relative.parts or any(part in ("", ".", "..") for part in relative.parts):
+                      raise SystemExit("trusted source archive contains an unsafe path")
+                  if member.name in seen:
+                      raise SystemExit("trusted source archive contains duplicate paths")
+                  seen.add(member.name)
+                  if not (member.isfile() or member.isdir()):
+                      raise SystemExit("trusted source archive contains a non-regular entry")
+                  total_size += member.size
+                  if total_size > 250 * 1024 * 1024:
+                      raise SystemExit("trusted source archive is unexpectedly large")
+                  target = root.joinpath(*relative.parts)
+                  target_resolved = target.resolve(strict=False)
+                  if root_resolved != target_resolved and root_resolved not in target_resolved.parents:
+                      raise SystemExit("trusted source archive escapes the workspace")
+                  if member.isdir():
+                      target.mkdir(parents=True, exist_ok=True)
+                      target.chmod(0o755)
+                      continue
+                  target.parent.mkdir(parents=True, exist_ok=True)
+                  source = archive.extractfile(member)
+                  if source is None:
+                      raise SystemExit("trusted source archive file is unreadable")
+                  with source, open(target, "wb") as output:
+                      shutil.copyfileobj(source, output)
+                  target.chmod(0o755 if member.mode & 0o111 else 0o644)
+          marker = root.parent / ".release-source" / "verified-source-sha"
+          marker.parent.mkdir(mode=0o700, exist_ok=True)
+          marker.write_text(expected_source_sha + "\n", encoding="ascii")
+          marker.chmod(0o600)
+          PY
+
+      - name: Verify immutable main source
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$(cat "$GITHUB_WORKSPACE/.release-source/verified-source-sha")" = "$GITHUB_SHA"
+
+      - name: Verify host tools
+        run: |
+          set -euo pipefail
+          docker compose version
+          rsync --version
+          curl --version
+          ip -4 addr show dev ens160
+          test "$(docker inspect procurement-test-tailscale --format '{{.State.Running}}')" = "true"
+          docker exec procurement-test-tailscale tailscale version
+          runner_guard=/home/ceshi/.local/libexec/procurement-actions-runner-guard.sh
+          test -x "$runner_guard"
+          test ! -L "$runner_guard"
+          test "$(stat -c '%a:%U' "$runner_guard")" = "700:ceshi"
+          cmp -s deploy/actions-runner-job-guard.sh "$runner_guard"
+          test ! -L /home/ceshi/actions-runner/.env
+          test "$(stat -c '%a:%U' /home/ceshi/actions-runner/.env)" = "600:ceshi"
+          grep -Fx 'PROCUREMENT_RUNNER_ROLE=test' /home/ceshi/actions-runner/.env
+          grep -Fx "ACTIONS_RUNNER_HOOK_JOB_STARTED=$runner_guard" /home/ceshi/actions-runner/.env
+
+      - name: Apply one-time administrator password reset
+        if: ${{ inputs.reset_admin_password == true }}
+        env:
+          RELEASE_ADMIN_PASSWORD_RESET: ${{ secrets.RELEASE_ADMIN_PASSWORD_RESET }}
+        run: |
+          set -euo pipefail
+          control_env=/home/ceshi/procurement-release-control/.env
+          test -f "$control_env"
+          test ! -L "$control_env"
+          test "$(stat -c '%a:%U' "$control_env")" = "600:ceshi"
+          python3 - "$control_env" <<'PY'
+          import os
+          import sys
+          import tempfile
+
+          path = sys.argv[1]
+          password = os.environ.get("RELEASE_ADMIN_PASSWORD_RESET", "")
+          if len(password) < 32 or "\n" in password or "\r" in password:
+              raise SystemExit("one-time release administrator password is missing or invalid")
+
+          with open(path, encoding="utf-8") as handle:
+              lines = handle.read().splitlines()
+          matches = [index for index, line in enumerate(lines) if line.startswith("RELEASE_ADMIN_PASSWORD=")]
+          if len(matches) != 1:
+              raise SystemExit("release control env must contain exactly one administrator password")
+          lines[matches[0]] = f"RELEASE_ADMIN_PASSWORD={password}"
+
+          directory = os.path.dirname(path)
+          descriptor, temporary = tempfile.mkstemp(prefix=".env.", dir=directory, text=True)
+          try:
+              with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
+                  handle.write("\n".join(lines) + "\n")
+                  handle.flush()
+                  os.fsync(handle.fileno())
+              os.chmod(temporary, 0o600)
+              os.replace(temporary, path)
+          finally:
+              if os.path.exists(temporary):
+                  os.unlink(temporary)
+          print("release administrator password reset applied")
+          PY
+
+      - name: Install and start trusted release control
+        id: install
+        run: |
+          set -euo pipefail
+          RELEASE_CONTROL_BIND_ADDRESS=192.168.132.151
+          ip -4 -o addr show dev ens160 | grep -F " $RELEASE_CONTROL_BIND_ADDRESS/"
+          mapfile -t tailscale_addresses < <(docker exec procurement-test-tailscale tailscale ip -4)
+          if [ "${#tailscale_addresses[@]}" -ne 1 ]; then
+            echo "Release control requires exactly one Tailscale IPv4 address" >&2
+            exit 1
+          fi
+          tailscale_address="${tailscale_addresses[0]}"
+          printf '%s' "$tailscale_address" | grep -Eq '^100\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$'
+          tailscale_dns_name="$(
+            docker exec procurement-test-tailscale tailscale status --json \
+              | python3 -c 'import json, sys; print(json.load(sys.stdin)["Self"]["DNSName"].rstrip("."))'
+          )"
+          test "$tailscale_dns_name" = "procurement-test-151.tailb89388.ts.net"
+
+          control_root=/home/ceshi/procurement-release-control
+          for managed_path in \
+            /home \
+            /home/ceshi \
+            "$control_root" \
+            "$control_root/release-agent" \
+            "$control_root/docker-compose.yml" \
+            "$control_root/.env"; do
+            if [ -L "$managed_path" ]; then
+              echo "Release control path must not be a symbolic link: $managed_path" >&2
+              exit 1
+            fi
+          done
+          mkdir -p "$control_root/release-agent"
+          test "$(readlink -f "$control_root")" = "$control_root"
+          test "$(readlink -f "$control_root/release-agent")" = "$control_root/release-agent"
+          test -f "$control_root/.env"
+          test ! -L "$control_root/.env"
+          test "$(stat -c '%a:%U' "$control_root/.env")" = "600:ceshi"
+          rsync -a --delete deploy/release-agent/ "$control_root/release-agent/"
+          install -m 0644 deploy/docker-compose.release-control.yml "$control_root/docker-compose.yml"
+
+          umask 077
+          python3 - "$control_root/.env" "$GITHUB_SHA" <<'PY'
+          import os
+          import re
+          import sys
+          import tempfile
+
+          path, release_sha = sys.argv[1:]
+          updates = {
+              "COMPOSE_PROJECT_NAME": "procurement-release-control",
+              "RELEASE_CONTROL_IMAGE": f"procurement-release-control:{release_sha}",
+              "RELEASE_CONTROL_BIND_ADDRESS": "192.168.132.151",
+              "RELEASE_CONTROL_HTTP_PORT": "18081",
+              "RELEASE_CONTROL_FRAME_ANCESTORS": "https://procurement-test-151.tailb89388.ts.net http://100.100.226.27:18080 http://192.168.132.151:18080 http://127.0.0.1:18080",
+              "RELEASE_GITHUB_OWNER": "dongfanfan94-droid",
+              "RELEASE_GITHUB_REPO": "enterprise-procurement-platform",
+              "RELEASE_TEST_STATUS_DIR": "/opt/procurement-test/deploy/test-status",
+          }
+          required = {
+              "RELEASE_ADMIN_USERNAME",
+              "RELEASE_ADMIN_PASSWORD",
+              "RELEASE_GITHUB_APP_ID",
+              "RELEASE_GITHUB_APP_INSTALLATION_ID",
+              "RELEASE_GITHUB_APP_PRIVATE_KEY_B64",
+              "RELEASE_PRODUCTION_HMAC_SECRET",
+              "RELEASE_RUNNERS_ISOLATED",
+              "RELEASE_CLEAN_BATCH_DATABASE_READY",
+          }
+          lines = []
+          seen = set()
+          values = {}
+          with open(path, encoding="utf-8") as handle:
+              for raw in handle:
+                  line = raw.rstrip("\n")
+                  if not line or line.startswith("#"):
+                      lines.append(line)
+                      continue
+                  if "=" not in line:
+                      raise SystemExit("release control env contains an invalid line")
+                  key, value = line.split("=", 1)
+                  if not re.fullmatch(r"[A-Z][A-Z0-9_]*", key) or key in seen:
+                      raise SystemExit("release control env contains an invalid or duplicate key")
+                  if key == "RELEASE_GITHUB_TOKEN":
+                      raise SystemExit("legacy GitHub token configuration must be removed")
+                  seen.add(key)
+                  values[key] = value
+                  lines.append(f"{key}={updates.get(key, value)}")
+          missing = required - seen
+          if missing:
+              raise SystemExit("release control env is missing required keys")
+          if len(values["RELEASE_ADMIN_PASSWORD"]) < 32:
+              raise SystemExit("release control administrator password is invalid")
+          app_configured = bool(values["RELEASE_GITHUB_APP_ID"])
+          if app_configured:
+              if not re.fullmatch(r"[1-9][0-9]*", values["RELEASE_GITHUB_APP_ID"]):
+                  raise SystemExit("release GitHub App ID is invalid")
+              if not re.fullmatch(r"[1-9][0-9]*", values["RELEASE_GITHUB_APP_INSTALLATION_ID"]):
+                  raise SystemExit("release GitHub App installation ID is invalid")
+              if not values["RELEASE_GITHUB_APP_PRIVATE_KEY_B64"]:
+                  raise SystemExit("release GitHub App private key is missing")
+              if len(values["RELEASE_PRODUCTION_HMAC_SECRET"]) < 32:
+                  raise SystemExit("release production HMAC is invalid")
+              if values["RELEASE_RUNNERS_ISOLATED"] != "true" or values["RELEASE_CLEAN_BATCH_DATABASE_READY"] != "true":
+                  raise SystemExit("release safety gates are not enabled")
+          for key, value in updates.items():
+              if key not in seen:
+                  lines.append(f"{key}={value}")
+          directory = os.path.dirname(path)
+          descriptor, temporary = tempfile.mkstemp(prefix=".env.", dir=directory, text=True)
+          try:
+              with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
+                  handle.write("\n".join(lines) + "\n")
+                  handle.flush()
+                  os.fsync(handle.fileno())
+              os.chmod(temporary, 0o600)
+              os.replace(temporary, path)
+          finally:
+              if os.path.exists(temporary):
+                  os.unlink(temporary)
+          print("enabled" if app_configured else "read-only")
+          PY
+          mode="$(python3 - "$control_root/.env" <<'PY'
+          values = {}
+          import sys
+          with open(sys.argv[1], encoding="utf-8") as handle:
+              for line in handle:
+                  if "=" in line and not line.startswith("#"):
+                      key, value = line.rstrip("\n").split("=", 1)
+                      values[key] = value
+          print("enabled" if values.get("RELEASE_GITHUB_APP_ID") else "read-only")
+          PY
+          )"
+
+          cd "$control_root"
+          docker compose --env-file .env -f docker-compose.yml config --quiet
+          docker compose --env-file .env -f docker-compose.yml build release-control
+          docker compose --env-file .env -f docker-compose.yml up -d --remove-orphans release-control
+
+          for _ in {1..30}; do
+            if curl -fsS "http://$RELEASE_CONTROL_BIND_ADDRESS:18081/health" >/dev/null; then
+              break
+            fi
+            sleep 2
+          done
+          curl -fsS "http://$RELEASE_CONTROL_BIND_ADDRESS:18081/health" >/dev/null
+          serve_status_before="$(mktemp "$RUNNER_TEMP/release-control-serve-before.XXXXXX.json")"
+          serve_status_after="$(mktemp "$RUNNER_TEMP/release-control-serve-after.XXXXXX.json")"
+          serve_switch_committed=0
+          restore_previous_serve_on_failure() {
+            local status="$?"
+            trap - EXIT
+            if [ "$serve_switch_committed" != "1" ]; then
+              docker exec procurement-test-tailscale tailscale serve \
+                --yes \
+                --https=18081 \
+                off >/dev/null 2>&1 || true
+              docker exec procurement-test-tailscale tailscale serve \
+                --yes \
+                --bg \
+                --tcp=18081 \
+                "tcp://$RELEASE_CONTROL_BIND_ADDRESS:18081" >/dev/null 2>&1 || true
+            fi
+            rm -f "$serve_status_before" "$serve_status_after"
+            exit "$status"
+          }
+          docker exec procurement-test-tailscale tailscale serve status --json > "$serve_status_before"
+          serve_mode="$(python3 - \
+            "$serve_status_before" \
+            "$tailscale_dns_name" \
+            "tcp://$RELEASE_CONTROL_BIND_ADDRESS:18081" \
+            "http://$RELEASE_CONTROL_BIND_ADDRESS:18081" <<'PY'
+          import json
+          import sys
+
+          before_path, dns_name, tcp_target, http_target = sys.argv[1:]
+          with open(sys.argv[1], encoding="utf-8") as handle:
+              before = json.load(handle)
+
+          tcp_config = before.get("TCP", {}).get("18081")
+          if tcp_config == {"TCPForward": tcp_target.removeprefix("tcp://")}:
+              print("tcp")
+              raise SystemExit(0)
+
+          web_origin = f"{dns_name}:18081"
+          handler = before.get("Web", {}).get(web_origin, {}).get("Handlers", {}).get("/", {})
+          if (
+              tcp_config == {"HTTPS": True}
+              and handler.get("Proxy") == http_target
+              and web_origin not in before.get("AllowFunnel", {})
+          ):
+              print("https")
+              raise SystemExit(0)
+
+          raise SystemExit("release-control port 18081 has an unexpected Serve configuration")
+          PY
+          )"
+          if [ "$serve_mode" = "tcp" ]; then
+            trap restore_previous_serve_on_failure EXIT
+            docker exec procurement-test-tailscale tailscale serve \
+              --yes \
+              --tcp=18081 \
+              off
+            docker exec procurement-test-tailscale tailscale serve \
+              --yes \
+              --bg \
+              --https=18081 \
+              "http://$RELEASE_CONTROL_BIND_ADDRESS:18081"
+            docker exec procurement-test-tailscale tailscale serve status --json > "$serve_status_after"
+          else
+            cp "$serve_status_before" "$serve_status_after"
+          fi
+          python3 - \
+            "$serve_status_before" \
+            "$serve_status_after" \
+            "$tailscale_dns_name" \
+            "http://$RELEASE_CONTROL_BIND_ADDRESS:18081" <<'PY'
+          import copy
+          import json
+          import sys
+
+          before_path, after_path, dns_name, target = sys.argv[1:]
+          with open(before_path, encoding="utf-8") as handle:
+              before = json.load(handle)
+          with open(after_path, encoding="utf-8") as handle:
+              after = json.load(handle)
+
+          def without_release_control(config):
+              cleaned = copy.deepcopy(config)
+              cleaned.get("TCP", {}).pop("18081", None)
+              for section in ("Web", "AllowFunnel"):
+                  values = cleaned.get(section)
+                  if isinstance(values, dict):
+                      for key in list(values):
+                          if key.endswith(":18081"):
+                              values.pop(key)
+              return cleaned
+
+          if without_release_control(before) != without_release_control(after):
+              raise SystemExit("Tailscale Serve settings outside release-control port 18081 changed")
+
+          if after.get("TCP", {}).get("18081") != {"HTTPS": True}:
+              raise SystemExit("release-control port 18081 is not configured for HTTPS")
+          web_origin = f"{dns_name}:18081"
+          handler = after.get("Web", {}).get(web_origin, {}).get("Handlers", {}).get("/", {})
+          if handler.get("Proxy") != target:
+              raise SystemExit("release-control HTTPS proxy target is incorrect")
+          if web_origin in after.get("AllowFunnel", {}):
+              raise SystemExit("release-control port 18081 must remain tailnet-only")
+          PY
+          serve_switch_committed=1
+          trap - EXIT
+          rm -f "$serve_status_before" "$serve_status_after"
+          docker compose --env-file .env -f docker-compose.yml ps
+          echo "url=https://$tailscale_dns_name:18081/" >> "$GITHUB_OUTPUT"
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+
+      - name: Reconcile the Gitee test deployment
+        if: ${{ inputs.reconcile_test_gitee_deployment == true }}
+        run: |
+          set -euo pipefail
+          test -f deploy/prepare_test_gitee_reconciliation.sh
+          test ! -L deploy/prepare_test_gitee_reconciliation.sh
+          test -f deploy/gitee_test_deploy_bootstrap.sh
+          test ! -L deploy/gitee_test_deploy_bootstrap.sh
+          bash deploy/prepare_test_gitee_reconciliation.sh
+          bash deploy/gitee_test_deploy_bootstrap.sh
+          state_file=/home/ceshi/.local/state/procurement-test-gitee/current-sha
+          status_file=/opt/procurement-test/deploy/test-status/current-gitee-build-ref
+          test -f "$state_file" && test ! -L "$state_file"
+          test -f "$status_file" && test ! -L "$status_file"
+          build_ref="$(tr -d '\r\n' < "$state_file")"
+          printf '%s' "$build_ref" | grep -Eq '^[0-9a-f]{40}$'
+          backend_image="procurement-backend:gitee-test-$build_ref"
+          frontend_image="procurement-frontend:gitee-test-$build_ref"
+          expected_marker="{\"buildRef\":\"$build_ref\",\"backendImage\":\"$backend_image\",\"frontendImage\":\"$frontend_image\"}"
+          grep -Fqx "$expected_marker" "$status_file"
+          test "$(docker inspect procurement-test-backend-1 --format '{{.Config.Image}}')" = "$backend_image"
+          test "$(docker inspect procurement-test-frontend-1 --format '{{.Config.Image}}')" = "$frontend_image"
+          test "$(docker inspect procurement-test-backend-1 --format '{{.State.Health.Status}}')" = "healthy"
+          test "$(docker inspect procurement-test-frontend-1 --format '{{.State.Health.Status}}')" = "healthy"
+          test "$(docker inspect procurement-test-feishu-egress-1 --format '{{.State.Health.Status}}')" = "healthy"
+          curl -fsS http://192.168.132.151:18080/ >/dev/null
+          curl -fsS http://192.168.132.151:18080/v3/api-docs >/dev/null
+
+      - name: Apply one-time test Feishu notification configuration
+        if: ${{ inputs.configure_test_feishu_notifications == true }}
+        env:
+          TEST_FEISHU_CONFIG_B64: ${{ secrets.TEST_FEISHU_CONFIG_B64 }}
+        run: bash deploy/configure_test_feishu_notifications.sh
+
+      - name: Publish control link
+        run: |
+          echo "### Trusted release control" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Console: ${{ steps.install.outputs.url }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Mode: ${{ steps.install.outputs.mode }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Credentials: host-managed; no release secret is stored in GitHub Environments" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove trusted source cache from the runner
+        if: always()
+        working-directory: ${{ github.workspace }}
+        run: rm -rf -- "$GITHUB_WORKSPACE/.release-source" "$GITHUB_WORKSPACE/trusted"

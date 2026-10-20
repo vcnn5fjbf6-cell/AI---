@@ -1,0 +1,4 @@
+-- The current Docker deployment applies idempotent SQL files from
+-- backend-springboot/sql/zz_*.sql after container startup.
+-- Keep the executable migration in:
+-- backend-springboot/sql/zz_zzzz_org_scope_approval_model.sql

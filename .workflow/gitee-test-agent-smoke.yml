@@ -1,0 +1,32 @@
+version: '1.0'
+name: gitee-test-agent-smoke
+displayName: gitee-test-agent-smoke
+triggers:
+  trigger: manual
+stages:
+  - name: verify_test_agent
+    displayName: 验证测试主机 Agent
+    strategy: naturally
+    trigger: auto
+    executor: []
+    steps:
+      - step: shell@agent
+        name: verify_test_agent
+        displayName: 验证 151 测试主机
+        hostGroupID:
+          ID: procurement-test-151
+          hostID:
+            - m6-procurement-151
+        script:
+          - set -euo pipefail
+          - 'test "$(hostname)" = "m6-procurement-151"'
+          - 'test "$(id -un)" = "ceshi"'
+          - 'docker version --format "{{.Server.Version}}"'
+          - docker compose version
+          - curl -fsS http://127.0.0.1:18080/ >/dev/null
+          - curl -fsS http://127.0.0.1:18080/v3/api-docs >/dev/null
+          - echo "Gitee Go test agent smoke check passed"
+        notify: []
+        strategy:
+          retry: '0'
+          stepTimeout: 5
