@@ -1,0 +1,9 @@
+package com.company.procurement.modules.integration.feishu.mapper;
+
+import com.baomidou.mybatisplus.core.mapper.BaseMapper;
+import com.company.procurement.modules.integration.feishu.entity.FeishuApprovalCardNotification;
+import org.apache.ibatis.annotations.Mapper;
+
+@Mapper
+public interface FeishuApprovalCardNotificationMapper extends BaseMapper<FeishuApprovalCardNotification> {
+}

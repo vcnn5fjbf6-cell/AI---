@@ -1,0 +1,30 @@
+SET NAMES utf8mb4;
+
+CREATE TABLE IF NOT EXISTS supplier_quote_item (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '主键ID',
+  quote_id BIGINT NOT NULL COMMENT '报价单ID',
+  purchase_request_id BIGINT NOT NULL COMMENT '采购申请ID',
+  purchase_request_item_id BIGINT NOT NULL COMMENT '采购明细ID',
+  line_no INT NOT NULL COMMENT '行号',
+  item_code VARCHAR(64) NULL COMMENT '物料编码',
+  item_name VARCHAR(255) NOT NULL COMMENT '商品名称',
+  spec_model VARCHAR(255) NULL COMMENT '规格型号',
+  unit VARCHAR(32) NOT NULL COMMENT '单位',
+  qty DECIMAL(18,2) NOT NULL DEFAULT 0.00 COMMENT '数量',
+  unit_price DECIMAL(18,2) NOT NULL DEFAULT 0.00 COMMENT '报价单价',
+  line_amount DECIMAL(18,2) NOT NULL DEFAULT 0.00 COMMENT '报价金额',
+  lead_time_days INT NOT NULL DEFAULT 0 COMMENT '本项交期天数',
+  quote_remark VARCHAR(500) NULL COMMENT '本项报价备注',
+  replacement_flag TINYINT NOT NULL DEFAULT 0 COMMENT '是否替换商品 0否 1是',
+  status VARCHAR(32) NOT NULL DEFAULT 'ACTIVE' COMMENT '状态 ACTIVE/WAIVED/INACTIVE',
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  created_by BIGINT NOT NULL DEFAULT 0 COMMENT '创建人',
+  updated_by BIGINT NOT NULL DEFAULT 0 COMMENT '更新人',
+  is_deleted TINYINT NOT NULL DEFAULT 0 COMMENT '删除标记 0未删 1已删',
+  version INT NOT NULL DEFAULT 0 COMMENT '版本号',
+  KEY idx_quote_item_quote (quote_id),
+  KEY idx_quote_item_request (purchase_request_id),
+  KEY idx_quote_item_request_item (purchase_request_item_id),
+  KEY idx_quote_item_deleted (is_deleted)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='供应商报价明细表';

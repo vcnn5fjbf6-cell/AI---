@@ -1,0 +1,53 @@
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+deploy/.env
+deploy/.env.*
+!deploy/.env.example
+!deploy/.env.test.example
+deploy/db/test-init/runtime/
+
+# Local deployment/debug scripts with machine credentials
+deploy/*.py
+!deploy/deploy_current.py
+!deploy/check_status.py
+!deploy/verify_candidate_image_archive.py
+deploy/__pycache__/
+
+# Dependencies and build outputs
+node_modules/
+frontend-vue/node_modules/
+dist/
+frontend-vue/dist/
+backend-springboot/target/
+
+# Bundled local toolchains and binary archives
+backend-springboot/tools/
+*.zip
+*.jar
+
+# Runtime/cache files
+__pycache__/
+*.py[cod]
+*.log
+/.tmp/
+/tmp/
+*.mp3
+*.mp4
+*.pptx
+*.wav
+.DS_Store
+Thumbs.db
+
+# Editor/workspace metadata
+.vscode/
+.idea/
+.workbuddy/
+packages/
+
+# 本机飞书密钥（勿提交）
+feishu.env
+
+# 常驻服务运行时日志与状态
+.runtime/

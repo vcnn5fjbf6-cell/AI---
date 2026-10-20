@@ -1,0 +1,112 @@
+name: Verify Pull Request
+run-name: PR build #${{ github.event.pull_request.number }} ${{ github.event.pull_request.head.sha }}
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+
+concurrency:
+  group: verify-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  statuses: write
+
+jobs:
+  verify:
+    name: Build pull request without deployment
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+
+    steps:
+      - name: Checkout pull request merge commit
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify merge identity and repository paths
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^1)" = "$PR_BASE_SHA"
+          test "$(git rev-parse HEAD^2)" = "$PR_HEAD_SHA"
+          if git ls-tree -r --full-tree HEAD | awk '$1 == "120000" { found=1 } END { exit(found ? 0 : 1) }'; then
+            echo "Pull requests may not contain symbolic links" >&2
+            exit 1
+          fi
+
+      - name: Mark pull request build pending
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        env:
+          STATUS_SHA: ${{ github.event.pull_request.head.sha }}
+          STATUS_CONTEXT: Verify pull request build @ ${{ github.event.pull_request.base.sha }}
+        with:
+          script: |
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: process.env.STATUS_SHA,
+              state: 'pending',
+              context: process.env.STATUS_CONTEXT,
+              description: 'Building the pull request against the current main branch',
+              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
+            });
+
+      - name: Verify procurement request department state
+        run: node frontend-vue/scripts/check-procurement-request-department.mjs
+
+      - name: Verify user management region resolution
+        run: node frontend-vue/scripts/check-user-management-region.mjs
+
+      - name: Verify production recovery flow
+        run: |
+          bash -n deploy/deploy_local_runner.sh
+          bash deploy/tests/test_release_control_source_transport_contract.sh
+          bash deploy/tests/test_test_feishu_notifications_contract.sh
+          bash deploy/tests/test_release_performance_contract.sh
+          bash deploy/tests/test_pull_immutable_images.sh
+          bash deploy/tests/test_deploy_local_runner_recovery.sh
+
+      - name: Build backend without private credentials
+        run: docker build --tag procurement-pr-backend:${{ github.event.pull_request.head.sha }} backend-springboot
+
+      - name: Build frontend without private credentials
+        run: |
+          docker build \
+            --build-arg VITE_APP_ENV=test \
+            --build-arg VITE_BUILD_REF="${{ github.event.pull_request.head.sha }}" \
+            --tag procurement-pr-frontend:${{ github.event.pull_request.head.sha }} \
+            frontend-vue
+
+      - name: Publish pull request build result
+        if: always()
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        env:
+          BUILD_RESULT: ${{ job.status }}
+          STATUS_SHA: ${{ github.event.pull_request.head.sha }}
+          STATUS_CONTEXT: Verify pull request build @ ${{ github.event.pull_request.base.sha }}
+        with:
+          script: |
+            const successful = process.env.BUILD_RESULT === 'success';
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: process.env.STATUS_SHA,
+              state: successful ? 'success' : 'failure',
+              context: process.env.STATUS_CONTEXT,
+              description: successful
+                ? 'PR verification and builds passed'
+                : 'PR verification or build failed',
+              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
+            });

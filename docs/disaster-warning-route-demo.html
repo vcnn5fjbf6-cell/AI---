@@ -1,0 +1,403 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>酒仙桥区域灾害预警 Demo</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Microsoft YaHei", "PingFang SC", Arial, sans-serif;
+      color: #0f1f3a;
+      background: #f3f7fc;
+    }
+    .shell { display: flex; min-height: 100vh; }
+    .sidebar {
+      width: 252px;
+      padding: 18px 14px;
+      background: #fff;
+      border-right: 1px solid #dbe5f2;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      height: 56px;
+      padding: 10px;
+      border: 1px solid #dce6f5;
+      border-radius: 8px;
+      margin-bottom: 18px;
+    }
+    .brand-icon {
+      width: 36px;
+      height: 36px;
+      border-radius: 8px;
+      display: grid;
+      place-items: center;
+      background: #1f63ff;
+      color: #fff;
+      font-weight: 800;
+    }
+    .brand-title { font-weight: 700; font-size: 15px; }
+    .brand-sub { font-size: 11px; color: #6b7c93; margin-top: 2px; }
+    .nav-title { margin: 22px 16px 8px; color: #7c8ba0; font-size: 12px; }
+    .nav-item {
+      height: 42px;
+      display: flex;
+      align-items: center;
+      padding: 0 16px;
+      border-radius: 6px;
+      color: #334968;
+      font-size: 14px;
+      margin-bottom: 4px;
+    }
+    .nav-item.active {
+      color: #0f58ff;
+      background: #e8f0ff;
+      font-weight: 700;
+    }
+    .main { flex: 1; min-width: 0; }
+    .topbar {
+      height: 84px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 28px;
+      background: #fff;
+      border-bottom: 1px solid #dbe5f2;
+    }
+    .date { color: #125dff; font-weight: 700; font-size: 13px; margin-bottom: 6px; }
+    h1 { margin: 0; font-size: 26px; letter-spacing: 0; }
+    .account {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 14px;
+      border: 1px solid #d7e2f2;
+      border-radius: 8px;
+      background: #f9fbff;
+      font-size: 13px;
+    }
+    .content { padding: 20px 28px 32px; }
+    .panel {
+      background: #fff;
+      border: 1px solid #d9e4f3;
+      border-radius: 8px;
+      box-shadow: 0 8px 22px rgba(30, 60, 110, .05);
+      margin-bottom: 16px;
+    }
+    .panel-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 18px;
+      border-bottom: 1px solid #e4ebf5;
+    }
+    .panel-title { font-size: 18px; font-weight: 800; }
+    .button {
+      height: 32px;
+      padding: 0 14px;
+      border: 1px solid #cfd9e8;
+      border-radius: 6px;
+      background: #fff;
+      color: #2f4770;
+      font-weight: 700;
+    }
+    .button.primary { background: #1f63ff; border-color: #1f63ff; color: #fff; }
+    .button.warning { background: #f08c00; border-color: #f08c00; color: #fff; }
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .stat {
+      background: #fff;
+      border: 1px solid #d9e4f3;
+      border-radius: 8px;
+      padding: 14px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .stat label { color: #58708f; font-size: 13px; }
+    .stat strong { font-size: 28px; }
+    .risk-low { color: #15a056; }
+    .risk-warn { color: #f08c00; }
+    .form-grid {
+      display: grid;
+      grid-template-columns: 1.5fr 1fr 1fr;
+      gap: 14px;
+      padding: 18px;
+    }
+    .field label {
+      display: block;
+      color: #415a7c;
+      font-size: 13px;
+      font-weight: 700;
+      margin-bottom: 7px;
+    }
+    .input, .select {
+      height: 34px;
+      width: 100%;
+      border: 1px solid #d3deee;
+      border-radius: 6px;
+      padding: 0 11px;
+      color: #2e4569;
+      background: #fff;
+      display: flex;
+      align-items: center;
+    }
+    .input.disabled { background: #f3f6fb; color: #798aa3; }
+    .switch-row {
+      display: flex;
+      gap: 18px;
+      align-items: center;
+      padding: 0 18px 18px;
+      color: #334968;
+      font-size: 14px;
+    }
+    .switch { width: 38px; height: 20px; border-radius: 999px; background: #1f63ff; display: inline-block; position: relative; vertical-align: middle; margin-right: 6px; }
+    .switch::after { content: ""; width: 16px; height: 16px; border-radius: 50%; background: #fff; position: absolute; top: 2px; right: 2px; }
+    .grid-2 { display: grid; grid-template-columns: minmax(0, 1.7fr) 360px; gap: 16px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { border-bottom: 1px solid #e5edf6; padding: 12px 14px; text-align: left; vertical-align: middle; }
+    th { background: #f7faff; color: #4d6280; font-weight: 700; }
+    tr:last-child td { border-bottom: 0; }
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      height: 22px;
+      padding: 0 8px;
+      border-radius: 4px;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .tag.yellow { color: #ad6800; background: #fff3bf; border: 1px solid #ffd666; }
+    .tag.blue { color: #0958d9; background: #e6f4ff; border: 1px solid #91caff; }
+    .tag.green { color: #237804; background: #f6ffed; border: 1px solid #b7eb8f; }
+    .policy { padding: 18px; }
+    .policy-section { margin-bottom: 18px; }
+    .policy-title { font-weight: 800; margin-bottom: 8px; }
+    .pill {
+      display: inline-block;
+      margin: 0 6px 6px 0;
+      padding: 5px 8px;
+      border-radius: 4px;
+      background: #eef4ff;
+      color: #244a86;
+      font-size: 12px;
+    }
+    .rule {
+      padding: 9px 10px;
+      border: 1px solid #e3ebf5;
+      border-radius: 6px;
+      margin-bottom: 8px;
+      color: #334968;
+      font-size: 13px;
+    }
+    .log { padding: 0 18px 18px; }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-icon">运</div>
+        <div>
+          <div class="brand-title">酒仙桥区域运维平台</div>
+          <div class="brand-sub">Regional Operations Console</div>
+        </div>
+      </div>
+      <div class="nav-title">工作台</div>
+      <div class="nav-item">工作台</div>
+      <div class="nav-title">平台管理</div>
+      <div class="nav-item">用户管理</div>
+      <div class="nav-item">采购规则设置</div>
+      <div class="nav-title">业务管理</div>
+      <div class="nav-item">维保管理</div>
+      <div class="nav-item">采购管理</div>
+      <div class="nav-item active">灾害预警</div>
+    </aside>
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <div class="date">6月24日星期三</div>
+          <h1>酒仙桥区域灾害预警</h1>
+        </div>
+        <div class="account">
+          <span>当前账号</span>
+          <strong>系统管理员</strong>
+          <button class="button">账号</button>
+        </div>
+      </header>
+      <section class="content">
+        <div class="cards">
+          <div class="stat"><label>当前风险</label><strong class="risk-low">低</strong></div>
+          <div class="stat"><label>天气预警</label><strong class="risk-warn">1</strong></div>
+          <div class="stat"><label>地震速报</label><strong>0</strong></div>
+          <div class="stat"><label>值班群通知</label><strong class="risk-low">正常</strong></div>
+        </div>
+        <div class="panel">
+          <div class="panel-head">
+            <div class="panel-title">监测范围配置</div>
+            <div>
+              <button class="button">手动刷新</button>
+              <button class="button primary">保存配置</button>
+            </div>
+          </div>
+          <div class="form-grid">
+            <div class="field">
+              <label>中心位置</label>
+              <div class="input disabled">北京市朝阳区酒仙桥东路1号M6楼</div>
+            </div>
+            <div class="field">
+              <label>经纬度</label>
+              <div class="input disabled">116.50, 39.97</div>
+            </div>
+            <div class="field">
+              <label>监测半径</label>
+              <div class="select">3 km</div>
+            </div>
+            <div class="field">
+              <label>区域限制</label>
+              <div class="input disabled">仅酒仙桥区域</div>
+            </div>
+            <div class="field">
+              <label>和风天气 Key</label>
+              <div class="input">••••••••••••••••••••••••</div>
+            </div>
+            <div class="field">
+              <label>推送群组</label>
+              <div class="input disabled">酒仙桥值班群</div>
+            </div>
+          </div>
+          <div class="switch-row">
+            <span><i class="switch"></i>启用天气预警</span>
+            <span><i class="switch"></i>启用地震速报</span>
+            <span><i class="switch"></i>启用飞书通知</span>
+          </div>
+        </div>
+        <div class="grid-2">
+          <div class="panel">
+            <div class="panel-head">
+              <div class="panel-title">实时预警列表</div>
+              <button class="button">查看历史</button>
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th>等级</th>
+                  <th>类型</th>
+                  <th>标题</th>
+                  <th>影响范围</th>
+                  <th>开始时间</th>
+                  <th>状态</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><span class="tag yellow">黄色</span></td>
+                  <td>雷电</td>
+                  <td>朝阳区雷电黄色预警</td>
+                  <td>酒仙桥区域 3km</td>
+                  <td>14:30</td>
+                  <td><span class="tag green">已通知</span></td>
+                  <td><button class="button">详情</button></td>
+                </tr>
+                <tr>
+                  <td><span class="tag blue">蓝色</span></td>
+                  <td>大风</td>
+                  <td>朝阳区大风蓝色预警</td>
+                  <td>酒仙桥区域</td>
+                  <td>13:15</td>
+                  <td><span class="tag green">监控中</span></td>
+                  <td><button class="button">详情</button></td>
+                </tr>
+                <tr>
+                  <td><span class="tag blue">信息</span></td>
+                  <td>地震</td>
+                  <td>华北地区近地震信息提醒</td>
+                  <td>距中心 280km</td>
+                  <td>09:48</td>
+                  <td><span class="tag green">已归档</span></td>
+                  <td><button class="button">详情</button></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="panel">
+            <div class="panel-head"><div class="panel-title">通知策略</div></div>
+            <div class="policy">
+              <div class="policy-section">
+                <div class="policy-title">通知对象</div>
+                <span class="pill">酒仙桥值班群</span>
+              </div>
+              <div class="policy-section">
+                <div class="policy-title">触发规则</div>
+                <div class="rule">每日 09:00：推送今日气象预报</div>
+                <div class="rule">每周一 09:00：推送本周天气预报</div>
+                <div class="rule">黄色及以上预警：立即推送值班群</div>
+                <div class="rule">湿球温度异常：附带除湿和新风建议</div>
+              </div>
+              <button class="button primary">发送测试卡片</button>
+            </div>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-head">
+            <div class="panel-title">气象自动化字段记录</div>
+            <button class="button">查看完整字段</button>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>记录ID</th>
+                <th>推送城市</th>
+                <th>值班群</th>
+                <th>今日天气</th>
+                <th>相对湿度</th>
+                <th>干球温度</th>
+                <th>湿球温度</th>
+                <th>饱和温度</th>
+                <th>实时降雨量</th>
+                <th>重保戒备</th>
+                <th>接单状态</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>20250604117</td>
+                <td>北京市朝阳区</td>
+                <td>酒仙桥值班群</td>
+                <td>阴，23℃，东北风 2 级</td>
+                <td>72%</td>
+                <td>23℃</td>
+                <td>19.89℃</td>
+                <td>17.4℃</td>
+                <td>0.0 mm</td>
+                <td>无匹配标签</td>
+                <td>三级/二级/一级 0</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><div class="panel-title">最近同步日志</div></div>
+          <div class="log">
+            <table>
+              <thead><tr><th>时间</th><th>来源</th><th>结果</th><th>摘要</th></tr></thead>
+              <tbody>
+                <tr><td>14:31:06</td><td>和风天气</td><td><span class="tag green">成功</span></td><td>获取 1 条有效天气预警，已匹配酒仙桥区域</td></tr>
+                <tr><td>14:00:00</td><td>地震速报</td><td><span class="tag green">成功</span></td><td>无影响酒仙桥区域的地震事件</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

@@ -1,0 +1,61 @@
+spring:
+  datasource:
+    url: ${DB_URL}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  data:
+    redis:
+      host: ${REDIS_HOST:redis}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      timeout: ${REDIS_TIMEOUT:2s}
+
+mybatis-plus:
+  configuration:
+    log-impl: org.apache.ibatis.logging.nologging.NoLoggingImpl
+
+springdoc:
+  api-docs:
+    enabled: ${OPENAPI_ENABLED:true}
+  swagger-ui:
+    enabled: ${OPENAPI_ENABLED:true}
+
+app:
+  scheduling:
+    enabled: ${APP_SCHEDULING_ENABLED:false}
+
+feishu:
+  auth:
+    enabled: false
+  bot:
+    enabled: false
+  approval-card:
+    enabled: false
+    heartbeat-enabled: false
+    long-connection-enabled: false
+    app-base-url: ${FEISHU_APPROVAL_CARD_APP_BASE_URL:http://192.168.132.151:18080}
+
+procurement:
+  ecommerce:
+    resolve-short-links: false
+  ai:
+    qdrant:
+      enabled: false
+    dify:
+      enabled: false
+      api-key: ""
+    m3:
+      enabled: false
+      api-key: ""
+
+integrations:
+  shopping:
+    token: ""
+
+ehs:
+  enabled: true
+  public-enabled: true
+
+outsourcing:
+  enabled: true

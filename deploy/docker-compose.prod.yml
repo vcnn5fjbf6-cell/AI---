@@ -1,0 +1,122 @@
+version: "3.9"
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: procurement-mysql
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      TZ: Asia/Shanghai
+    command:
+      - --default-authentication-plugin=mysql_native_password
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ../backend-springboot/sql:/docker-entrypoint-initdb.d
+
+  redis:
+    image: redis:7.2-alpine
+    container_name: procurement-redis
+    restart: always
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      TZ: Asia/Shanghai
+    command:
+      - sh
+      - -c
+      - |
+        if [ -n "$$REDIS_PASSWORD" ]; then
+          redis-server --appendonly yes --requirepass "$$REDIS_PASSWORD"
+        else
+          redis-server --appendonly yes
+        fi
+    volumes:
+      - redis_data:/data
+
+  qdrant:
+    image: qdrant/qdrant:v1.12.5
+    container_name: procurement-qdrant
+    restart: always
+    environment:
+      QDRANT__SERVICE__HTTP_PORT: 6333
+      QDRANT__SERVICE__GRPC_PORT: 6334
+      TZ: Asia/Shanghai
+    volumes:
+      - qdrant_data:/qdrant/storage
+
+  backend:
+    image: ${BACKEND_IMAGE:?BACKEND_IMAGE must be an exact tested image digest}
+    container_name: procurement-backend
+    restart: always
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      SERVER_PORT: 8080
+      DB_URL: jdbc:mysql://mysql:3306/${MYSQL_DATABASE}?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
+      DB_USERNAME: root
+      DB_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      QDRANT_ENABLED: ${QDRANT_ENABLED:-true}
+      QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}
+      QDRANT_COLLECTION_PREFIX: ${QDRANT_COLLECTION_PREFIX:-procurement}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_ISSUER: enterprise-procurement-platform
+      JWT_EXPIRE_SECONDS: 7200
+      OPENAPI_ENABLED: "false"
+      FEISHU_AUTH_ENABLED: ${FEISHU_AUTH_ENABLED:-false}
+      FEISHU_APP_ID: ${FEISHU_APP_ID:-}
+      FEISHU_APP_SECRET: ${FEISHU_APP_SECRET:-}
+      FEISHU_REDIRECT_URI: ${FEISHU_REDIRECT_URI:-}
+      FEISHU_ROOT_DEPARTMENT_ID: ${FEISHU_ROOT_DEPARTMENT_ID:-0}
+      FEISHU_DEPARTMENT_ID_TYPE: ${FEISHU_DEPARTMENT_ID_TYPE:-department_id}
+      FEISHU_DEPARTMENT_SEARCH_URL: ${FEISHU_DEPARTMENT_SEARCH_URL:-https://open.feishu.cn/open-apis/contact/v3/departments/search}
+      FEISHU_USER_ID_TYPE: ${FEISHU_USER_ID_TYPE:-user_id}
+      FEISHU_DIRECTORY_SYNC_PAGE_SIZE: ${FEISHU_DIRECTORY_SYNC_PAGE_SIZE:-50}
+      FEISHU_BOT_ENABLED: ${FEISHU_BOT_ENABLED:-false}
+      FEISHU_BOT_VERIFICATION_TOKEN: ${FEISHU_BOT_VERIFICATION_TOKEN:-}
+      FEISHU_BOT_MESSAGE_SEND_URL: ${FEISHU_BOT_MESSAGE_SEND_URL:-https://open.feishu.cn/open-apis/im/v1/messages}
+      FEISHU_APPROVAL_CARD_ENABLED: ${FEISHU_APPROVAL_CARD_ENABLED:-false}
+      FEISHU_APPROVAL_CARD_HEARTBEAT_ENABLED: ${FEISHU_APPROVAL_CARD_HEARTBEAT_ENABLED:-true}
+      FEISHU_APPROVAL_CARD_LONG_CONNECTION_ENABLED: ${FEISHU_APPROVAL_CARD_LONG_CONNECTION_ENABLED:-false}
+      FEISHU_APPROVAL_CARD_HEARTBEAT_FIXED_DELAY_MS: ${FEISHU_APPROVAL_CARD_HEARTBEAT_FIXED_DELAY_MS:-60000}
+      FEISHU_APPROVAL_CARD_BATCH_SIZE: ${FEISHU_APPROVAL_CARD_BATCH_SIZE:-20}
+      FEISHU_APPROVAL_CARD_DETAIL_ITEM_LIMIT: ${FEISHU_APPROVAL_CARD_DETAIL_ITEM_LIMIT:-8}
+      FEISHU_APPROVAL_CARD_RECEIVE_ID_TYPE: ${FEISHU_APPROVAL_CARD_RECEIVE_ID_TYPE:-open_id}
+      FEISHU_APPROVAL_CARD_VERIFICATION_TOKEN: ${FEISHU_APPROVAL_CARD_VERIFICATION_TOKEN:-}
+      FEISHU_APPROVAL_CARD_ENCRYPT_KEY: ${FEISHU_APPROVAL_CARD_ENCRYPT_KEY:-}
+      FEISHU_APPROVAL_CARD_APP_BASE_URL: ${FEISHU_APPROVAL_CARD_APP_BASE_URL:-}
+      FEISHU_APPROVAL_CARD_SYSTEM_ACTION_URL: ${FEISHU_APPROVAL_CARD_SYSTEM_ACTION_URL:-}
+      DIFY_PROCUREMENT_ENABLED: ${DIFY_PROCUREMENT_ENABLED:-false}
+      DIFY_PROCUREMENT_API_KEY: ${DIFY_PROCUREMENT_API_KEY:-}
+      DIFY_PROCUREMENT_APP_TYPE: ${DIFY_PROCUREMENT_APP_TYPE:-workflow}
+      DIFY_PROCUREMENT_WORKFLOW_RUN_URL: ${DIFY_PROCUREMENT_WORKFLOW_RUN_URL:-https://api.dify.ai/v1/workflows/run}
+      DIFY_PROCUREMENT_CHAT_MESSAGES_URL: ${DIFY_PROCUREMENT_CHAT_MESSAGES_URL:-https://api.dify.ai/v1/chat-messages}
+      DIFY_PROCUREMENT_RESPONSE_MODE: ${DIFY_PROCUREMENT_RESPONSE_MODE:-blocking}
+      SHOPPING_TOOL_TOKEN: ${SHOPPING_TOOL_TOKEN:-}
+      PLATFORM_FEEDBACK_STORAGE_DIR: ${PLATFORM_FEEDBACK_STORAGE_DIR:-/app/data/feedback}
+      ORDER_INVOICE_STORAGE_DIR: /app/data/order-invoices
+    volumes:
+      - ../data/feedback:/app/data/feedback
+      - ../data/order-invoices:/app/data/order-invoices
+    depends_on:
+      - mysql
+      - redis
+      - qdrant
+
+  frontend:
+    image: ${FRONTEND_IMAGE:?FRONTEND_IMAGE must be an exact tested image digest}
+    container_name: procurement-frontend
+    restart: always
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+
+volumes:
+  mysql_data:
+  redis_data:
+  qdrant_data:

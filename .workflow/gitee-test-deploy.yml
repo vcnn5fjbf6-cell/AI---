@@ -1,0 +1,30 @@
+version: '1.0'
+name: gitee-test-deploy
+displayName: Gitee 测试环境部署
+triggers:
+  trigger: auto
+  push:
+    branches:
+      precise:
+        - main
+stages:
+  - name: deploy_test
+    displayName: 部署 151 测试环境
+    strategy: naturally
+    trigger: auto
+    executor: []
+    steps:
+      - step: shell@agent
+        name: deploy_test
+        displayName: 从 Gitee main 部署测试环境
+        hostGroupID:
+          ID: procurement-test-151
+          hostID:
+            - m6-procurement-151
+        script:
+          - set -euo pipefail
+          - bash /home/ceshi/.local/bin/procurement-gitee-test-bootstrap
+        notify: []
+        strategy:
+          retry: '0'
+          stepTimeout: 60

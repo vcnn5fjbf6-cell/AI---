@@ -1,0 +1,4 @@
+interface:
+  display_name: "Procurement Network Architecture"
+  short_description: "Maintain ASA, 2960, DMZ, BMC, and VLAN planning for procurement."
+  default_prompt: "Use $procurement-network-architecture to update the procurement platform ASA, VLAN, DMZ, or BMC network plan."

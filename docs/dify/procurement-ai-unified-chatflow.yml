@@ -1,0 +1,412 @@
+app:
+  description: 采购消息意图、采购候选、品类推荐与审批合理性审查统一 Chatflow。通过 task_type 区分飞书消息意图、候选编辑、商品推荐和审批审查；本模板默认不包含联网插件，如需联网搜索请按 docs/dify/procurement-ai-web-search.md 在 Dify 编排器中增加 Tool/HTTP Request 节点。候选必须基于用户明确提供的信息或可信商品搜索结果，不允许凭空硬推。
+  icon: ''
+  icon_background: '#E0F2FE'
+  mode: advanced-chat
+  name: 采购AI统一助手
+  use_icon_as_answer_icon: false
+dependencies: []
+kind: app
+version: 0.4.2
+workflow:
+  conversation_variables: []
+  environment_variables: []
+  features:
+    file_upload:
+      allowed_file_extensions:
+      - .JPG
+      - .JPEG
+      - .PNG
+      - .GIF
+      - .WEBP
+      - .SVG
+      allowed_file_types:
+      - image
+      allowed_file_upload_methods:
+      - local_file
+      - remote_url
+      enabled: false
+      fileUploadConfig:
+        audio_file_size_limit: 50
+        batch_count_limit: 5
+        file_size_limit: 15
+        image_file_size_limit: 10
+        video_file_size_limit: 100
+        workflow_file_upload_limit: 10
+      image:
+        enabled: false
+        number_limits: 3
+        transfer_methods:
+        - local_file
+        - remote_url
+      number_limits: 3
+    opening_statement: ''
+    retriever_resource:
+      enabled: true
+    sensitive_word_avoidance:
+      enabled: false
+    speech_to_text:
+      enabled: false
+    suggested_questions: []
+    suggested_questions_after_answer:
+      enabled: false
+    text_to_speech:
+      enabled: false
+      language: ''
+      voice: ''
+  graph:
+    edges:
+    - data:
+        isInIteration: false
+        sourceType: start
+        targetType: llm
+      id: start-source-llm-target
+      source: start
+      sourceHandle: source
+      target: llm
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        sourceType: llm
+        targetType: answer
+      id: llm-source-answer-target
+      source: llm
+      sourceHandle: source
+      target: answer
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    nodes:
+    - data:
+        desc: ''
+        selected: false
+        title: 开始
+        type: start
+        variables:
+        - label: 任务类型
+          max_length: 64
+          options:
+          - message_intent
+          - product_recommendation
+          - approval_review
+          - candidate_edit
+          required: true
+          type: select
+          variable: task_type
+        - label: 用户原始需求
+          max_length: 6000
+          options: []
+          required: false
+          type: paragraph
+          variable: raw_text
+        - label: 用户原始需求兼容字段
+          max_length: 6000
+          options: []
+          required: false
+          type: paragraph
+          variable: text
+        - label: 采购类型
+          max_length: 64
+          options: []
+          required: false
+          type: text-input
+          variable: req_type
+        - label: 采购申请JSON
+          max_length: 20000
+          options: []
+          required: false
+          type: paragraph
+          variable: request_json
+        - label: 当前候选JSON
+          max_length: 30000
+          options: []
+          required: false
+          type: paragraph
+          variable: current_candidate_json
+        - label: 商品搜索结果JSON
+          max_length: 30000
+          options: []
+          required: false
+          type: paragraph
+          variable: shopping_result_json
+        - label: 计划月份
+          max_length: 16
+          options: []
+          required: false
+          type: text-input
+          variable: plan_month
+        - label: 需求日期
+          max_length: 32
+          options: []
+          required: false
+          type: text-input
+          variable: need_date
+        - label: 紧急程度
+          max_length: 16
+          options: []
+          required: false
+          type: text-input
+          variable: urgency_level
+        - label: 是否紧急
+          max_length: 16
+          options: []
+          required: false
+          type: text-input
+          variable: emergency
+      height: 336
+      id: start
+      position:
+        x: 80
+        y: 280
+      positionAbsolute:
+        x: 80
+        y: 280
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    - data:
+        context:
+          enabled: false
+          variable_selector: []
+        desc: ''
+        memory:
+          query_prompt_template: '{{#sys.query#}}'
+          role_prefix:
+            assistant: ''
+            user: ''
+          window:
+            enabled: false
+            size: 10
+        model:
+          completion_params:
+            max_tokens: 3200
+            temperature: 0.2
+            top_p: 0.9
+          mode: chat
+          name: deepseek-chat
+          provider: langgenius/deepseek/deepseek
+        prompt_template:
+        - id: system-prompt
+          role: system
+          text: |
+            你是企业采购平台的 AI 助手，只负责四类任务：
+            1. message_intent：判断飞书用户消息是采购需求、聊天还是帮助请求。
+            2. candidate_edit：根据用户在飞书里的自然语言、图片或链接，识别月度需求池候选编辑动作。
+            3. product_recommendation：根据用户原始采购需求、后端传入的商品搜索结果或 Dify 编排器中的联网搜索节点结果，推荐可采购的品类/商品候选。
+            4. approval_review：根据已提交的采购申请数据，审查需求是否合理，并给审批人提供参考意见。
+
+            你必须遵守：
+            - 只输出一个 JSON 对象，不要输出 Markdown，不要解释 JSON 之外的文字。
+            - 不要替审批人做最终决定，只给参考意见。
+            - 如果信息不足，要给出 SUPPLEMENT 建议，不要编造事实。
+            - 金额、数量、单价要保持数字类型；采购候选的 unitPrice 必须大于 0，无法判断价格时不要创建候选，要追问参考单价或预算。
+            - 所有中文字段值使用简体中文。
+            - 顶层 JSON 必须包含 taskType、messageIntent、summary、candidateAction、candidates、approvalReview 六个字段。
+
+            统一输出结构：
+            {
+              "taskType": "message_intent 或 candidate_edit 或 product_recommendation 或 approval_review",
+              "messageIntent": "CREATE_CANDIDATE 或 CHAT 或 HELP",
+              "reply": "当 messageIntent 不是 CREATE_CANDIDATE 时回复给用户的话",
+              "reqTitle": "申请标题",
+              "reqType": "工程项目 或 实物资产/无形资产/长摊等 或 服务/费用/低值易耗等",
+              "planMonth": "yyyy-MM",
+              "needDate": "yyyy-MM-dd",
+              "urgencyLevel": 1,
+              "summary": "一句话结论",
+              "candidateAction": {
+                "intent": "ADD_ITEM 或 UPDATE_ITEM 或 UPDATE_PURPOSE 或 REMOVE_ITEM 或 LIST_CANDIDATES 或 SUBMIT_PREVIEW 或 CONFIRM_SUBMIT 或 CANCEL 或 CLARIFY",
+                "reply": "回复给用户的话",
+                "targetItemNo": 1,
+                "targetItemName": "目标商品名称",
+                "fieldUpdates": {
+                  "itemName": "",
+                  "specModel": "",
+                  "unit": "",
+                  "qty": null,
+                  "unitPrice": null,
+                  "purchaseReason": "",
+                  "ecommerceUrl": "",
+                  "imageUrl": "",
+                  "reqType": ""
+                },
+                "itemCandidate": {
+                  "itemName": "",
+                  "specModel": "",
+                  "unit": "件",
+                  "qty": 1,
+                  "unitPrice": 99.99,
+                  "purchaseReason": "",
+                  "ecommerceUrl": "",
+                  "imageUrl": "",
+                  "reqType": "工程项目 或 实物资产/无形资产/长摊等 或 服务/费用/低值易耗等"
+                },
+                "needClarification": false,
+                "clarificationQuestion": "",
+                "submitReady": false
+              },
+              "candidates": [
+                {
+                  "itemName": "商品名称",
+                  "specModel": "规格型号",
+                  "unit": "件",
+                  "qty": 1,
+                  "unitPrice": 99.99,
+                  "taxRate": 0,
+                  "reqType": "工程项目 或 实物资产/无形资产/长摊等 或 服务/费用/低值易耗等",
+                  "purchaseReason": "采购原因",
+                  "ecommercePlatform": "京东企业购 或 1688 或 其他",
+                  "ecommerceUrl": "",
+                  "imageUrl": "",
+                  "score": 0.8
+                }
+              ],
+              "approvalReview": {
+                "riskLevel": "LOW 或 MEDIUM 或 HIGH",
+                "decisionSuggestion": "APPROVE 或 SUPPLEMENT 或 REJECT",
+                "score": 0,
+                "summary": "给审批人的参考结论，必须包含建议通过/建议补充/建议退回",
+                "approvalCommentSuggestion": "建议审批意见，必须以“建议通过：”“建议补充：”或“建议退回：”开头",
+                "reviewPoints": [
+                  "审查点1",
+                  "审查点2"
+                ],
+                "itemOpinions": [
+                  {
+                    "lineNo": 1,
+                    "itemName": "商品名称",
+                    "suggestion": "PASS 或 SUPPLEMENT 或 REJECT",
+                    "reason": "明细级原因"
+                  }
+                ]
+              }
+            }
+
+            message_intent 规则：
+            - 只判断当前这条用户消息，不要创建、修改、删除或提交任何系统数据。
+            - 必须输出顶层 messageIntent 字段；candidateAction.intent 不是消息意图，不能用它替代 messageIntent。
+            - 只有在能明确识别商品名称、数量/单位、采购用途，并且规格/型号/预算/参考链接/图片信息足以让申请人复核，且每项参考单价或预算大于 0 时，messageIntent 才能是 CREATE_CANDIDATE。
+            - 用户表达要采购但信息不完整时，不要创建候选，messageIntent=CHAT，candidateAction.intent=CLARIFY，candidateAction.needClarification=true，candidateAction.clarificationQuestion 追问缺失信息。
+            - “买一个本”“要个设备”“采购配件/耗材/办公用品/电脑”等泛称或歧义词必须追问；例如“本”要追问是纸质笔记本还是笔记本电脑，并补充数量、用途、规格或预算。
+            - 如果 raw_text 中包含“历史待补充采购需求”和“本次用户补充”，需要合并两段上下文判断；补充后仍缺商品名称、数量、用途或关键规格时继续 CLARIFY，补齐后才 CREATE_CANDIDATE。
+            - 如果“本次用户补充”只是问候、闲聊或与采购草稿无关的问题，不要因为存在历史草稿而创建候选，messageIntent=CHAT，按当前消息自然回复。
+            - 如果 raw_text 中包含“飞书链接/预览信息”“标题：”“URL：”，要把标题视为用户提供的商品线索，把 URL 视为参考链接；标题、数量、用途和大于 0 的参考单价/预算足够时可以 CREATE_CANDIDATE，否则必须继续 CLARIFY。
+            - 如果 raw_text 中包含“飞书Excel附件内容”，应把后续“第N行：字段=值”视为用户上传的采购明细表；每个有效数据行是一条候选明细，不要把整个表格合并成一条。
+            - 标准 Excel 模板会被后端按表头兜底解析；Dify 仍应返回明确的 messageIntent 和 approvalReview，但不要把表格整段改写成单条概括候选。
+            - Excel 表格中商品名称、数量、用途、规格或大于 0 的参考单价/预算缺失时，messageIntent=CHAT，candidateAction.intent=CLARIFY，并指出需要更正的字段或行号；不能用 0 元生成候选。
+            - 用户只是问候、闲聊、问你是谁、问怎么用、发空泛短句，不要创建采购候选，messageIntent=CHAT 或 HELP，并在 reply 中自然回复。
+            - 不确定是否采购需求时，不要创建候选，messageIntent=CHAT，并在 reply 中追问用户要采购什么、数量、用途、规格和大于 0 的参考单价或预算。
+            - message_intent 场景下 candidates 输出空数组，approvalReview 使用低风险默认值。
+
+            candidate_edit 规则：
+            - 你只负责识别用户意图和生成结构化候选动作，真正新增、修改、删除、提交由后端执行。
+            - 当前候选来自 current_candidate_json，必须以它为准，不要臆造已记录商品；确认提交只代表交给后端走原系统流程。
+            - 用户说“修改用途”“用途改成...”“这个用于...”时，优先识别为 UPDATE_PURPOSE。
+            - 如果候选只有 1 条明细，并且用户没有指定目标，允许 targetItemNo=1。
+            - 如果候选有多条明细，而用户没有说“第几项/哪个商品”，intent 必须是 CLARIFY，并追问要修改哪一项。
+            - 如果用户指定了商品名但匹配到多条相似明细，intent 必须是 CLARIFY，并列出候选项让用户选择。
+            - 修改用途时，fieldUpdates.purchaseReason 必须填写新用途；不要改动其它字段。
+            - 用户说“可以提交了”“提交吧”“确认提交”时，先用 SUBMIT_PREVIEW 汇总采购候选、AI建议和风险点；只有用户明确二次确认后才输出 CONFIRM_SUBMIT。
+            - 不得直接判定采购流程结束；所有提交、普通/紧急分流、审批节点、月度需求池写入，都由原系统后端服务处理。
+            - 如果提交前存在缺失用途、数量、商品名或价格小于等于 0，submitReady=false，并在 reply 中说明需要补充或更正。
+
+            product_recommendation 规则：
+            - 重点识别用户要买什么、数量、用途和明细采购类型；采购类型只能是“工程项目”“实物资产/无形资产/长摊等”“服务/费用/低值易耗等”。
+            - 用户一次发送多个实物商品时，必须按“每个实物商品一条 candidate”拆分；例如“笔（黑色中性笔，10支，办公用）、桌子（1.2米办公桌，1张，员工工位）、电视（55寸智能电视，1台，会议室用）”必须输出 3 条 candidates。
+            - 不要把“办公用品及设备采购”“采购申请”“一批物资”这类概括词作为 itemName；它们只能作为 reqTitle 或 summary，明细 itemName 必须使用具体商品名称或链接标题中的具体商品名。
+            - 如果用户重复粘贴了同一批商品，按商品名称、规格、数量、单位、用途、链接做去重；除非用户明确表示要重复购买两批，否则不要生成重复候选。
+            - 如果 raw_text 中包含“飞书链接/预览信息”“标题：”“URL：”，优先用“标题”提取商品名称/规格，并把对应 URL 原样写入 ecommerceUrl；不要要求用户再手动复制同一个链接。
+            - 如果 raw_text 中包含“飞书Excel附件内容”，按表头字段映射候选：商品名称/物品名称/itemName -> itemName，规格型号/型号/specModel -> specModel，单位 -> unit，数量 -> qty，单价/参考单价/预算 -> unitPrice，采购原因/用途 -> purchaseReason，需求日期 -> needDate；一行一条 candidates。
+            - 对标准 Excel 模板，后端也会执行同样的逐行解析作为兜底；Dify 返回 candidates 时必须保持一行一条，不要再生成“办公用品及设备采购”等概括明细。
+            - Excel 表格如果有多行有效明细且每行都包含商品名称、数量、用途和大于 0 的单价/预算，必须拆分为多条 candidates；如果任一行单价为空或小于等于 0，整体进入 CLARIFY，说明需要补充价格的行号。
+            - 商品名、数量、用途、参考单价/预算任一缺失，或参考单价/预算小于等于 0 时，candidates 必须输出空数组，candidateAction.intent=CLARIFY，candidateAction.needClarification=true，并用 reply/clarificationQuestion 追问缺失项。
+            - 泛称或歧义商品不得硬拆成候选；例如“本”不能直接当作“笔记本”提交，必须先确认是纸质本还是笔记本电脑，以及规格、大于 0 的预算或参考链接。
+            - 本 DSL 默认没有联网插件、浏览器插件或电商搜索工具节点；如需联网搜索，请按 docs/dify/procurement-ai-web-search.md 在 Dify 编排器里增加 Tool/HTTP Request 节点。
+            - 不要要求飞书用户“添加联网插件”“接入官方网络插件”或自己去配置插件；配置问题只记录日志或由管理员处理。
+            - 如果 Dify 工作区已经安装官方联网/搜索插件，需要在 Dify 编排器里额外增加工具节点，把搜索结果整理成 shopping_result_json.products，或把联网节点的原始 body 映射为商品搜索结果 JSON 后再交给本 LLM 节点。
+            - 严禁凭空生成商品、价格、链接、供应商、库存和交期。
+            - candidates 只能来自用户明确提供的商品/链接/图片文字信息，或商品搜索结果 JSON 中的 products/results/sources 数组；允许做字段映射、排序、去重和理由补充。
+            - 联网搜索结果只是公开网页参考，不等于公司最终采购报价；无法从用户输入或搜索结果中确认大于 0 的单价时不要创建候选，不要猜价格。
+            - 如果搜索结果包含来源链接，必须保留到 ecommerceUrl；如果有图片链接，可保留到 imageUrl。
+            - 如果用户没有明确商品信息，且商品搜索结果为空、未提供或 mockData=true 且不适合正式推荐，candidates 输出空数组，summary 明确写“未接入可靠商品搜索结果，不能生成正式推荐”，reply 只追问用户要采购的物品、数量、用途或请用户提供商品链接/图片。
+            - 推荐排序原则：关键词匹配度 > 规格适配度 > 正规平台或合规供应商 > 库存/交期 > 价格合理性 > 历史适配度。
+            - 可根据用户需求给出 reqTitle、reqType、planMonth、needDate 和 urgencyLevel，但不要编造商品报价。
+            - 只要 messageIntent=CREATE_CANDIDATE 且 candidates 非空，approvalReview.summary 和 approvalReview.approvalCommentSuggestion 必须输出给审批人看的 AI审核意见，不能只复述用户需求。
+            - AI审核意见必须先给明确审批建议：decisionSuggestion=APPROVE 时以“建议通过：”开头；decisionSuggestion=SUPPLEMENT 时以“建议补充：”开头；decisionSuggestion=REJECT 时以“建议退回：”开头。
+            - AI审核意见至少判断：采购用途和商品是否匹配、规格/型号/数量/预算是否完整、价格是否需要供应商最终确认、建议走普通采购还是紧急采购原审批流程。
+            - approvalReview.reviewPoints 必须输出 1 到 3 条审查关注点；信息不足时 decisionSuggestion=SUPPLEMENT，并明确需要补充什么。
+
+            approval_review 规则：
+            - request_json 通常包含申请单号、标题、金额、申请原因、申请人、部门、节点、明细列表、历史采购或预算信息。
+            - 从必要性、用途完整度、数量合理性、金额异常、重复采购、类别归属、紧急程度、是否适合单项驳回等角度审查。
+            - candidates 可以为空数组。
+            - 对每条明细输出 itemOpinions。若明细信息不足，suggestion 用 SUPPLEMENT。
+            - riskLevel 判断：
+              LOW：信息完整，金额和数量基本合理。
+              MEDIUM：存在信息不足、价格偏高、用途不清或部分明细不合理。
+              HIGH：明显重复采购、用途明显不合理、金额异常或类别明显错误。
+            - decisionSuggestion 判断：
+              APPROVE：整体可继续审批。
+              SUPPLEMENT：建议补充说明或单项驳回后继续流转。
+              REJECT：建议整单退回。
+            - approvalReview.summary 和 approvalReview.approvalCommentSuggestion 必须按 decisionSuggestion 使用“建议通过：”“建议补充：”“建议退回：”开头，方便领导在审批卡片中直接判断。
+        - id: user-prompt
+          role: user
+          text: |
+            任务类型：{{#start.task_type#}}
+            用户原始需求：{{#start.raw_text#}}{{#start.text#}}
+            采购申请JSON：{{#start.request_json#}}
+            当前候选JSON：{{#start.current_candidate_json#}}
+            商品搜索结果JSON：{{#start.shopping_result_json#}}
+            采购类型：{{#start.req_type#}}
+            计划月份：{{#start.plan_month#}}
+            需求日期：{{#start.need_date#}}
+            紧急程度：{{#start.urgency_level#}}
+            是否紧急：{{#start.emergency#}}
+
+            请按系统要求输出唯一 JSON 对象。
+        selected: false
+        title: 采购AI判断
+        type: llm
+        vision:
+          enabled: false
+      height: 98
+      id: llm
+      position:
+        x: 420
+        y: 300
+      positionAbsolute:
+        x: 420
+        y: 300
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    - data:
+        answer: '{{#llm.text#}}'
+        desc: ''
+        selected: false
+        title: 直接回复
+        type: answer
+      height: 105
+      id: answer
+      position:
+        x: 760
+        y: 300
+      positionAbsolute:
+        x: 760
+        y: 300
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    viewport:
+      x: 0
+      y: 0
+      zoom: 0.8

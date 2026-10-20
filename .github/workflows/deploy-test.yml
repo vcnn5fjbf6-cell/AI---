@@ -1,0 +1,622 @@
+name: Deploy Release Batch to Test
+run-name: Release test ${{ inputs.release_batch_id }} ${{ inputs.candidate_sha }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_ref:
+        description: release/batch-* branch selected by the trusted release control
+        required: true
+        type: string
+      candidate_sha:
+        description: Exact release branch commit to test
+        required: true
+        type: string
+      release_batch_id:
+        description: Release control batch UUID
+        required: true
+        type: string
+
+concurrency:
+  group: procurement-test-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build release candidate on isolated runner
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      candidate_sha: ${{ steps.identity.outputs.candidate_sha }}
+      candidate_base_sha: ${{ steps.identity.outputs.candidate_base_sha }}
+      backend_image: ${{ steps.publish.outputs.backend_image }}
+      frontend_image: ${{ steps.publish.outputs.frontend_image }}
+      candidate_archive_sha256: ${{ steps.archive.outputs.archive_sha256 }}
+      candidate_backend_image_id: ${{ steps.publish.outputs.backend_image_id }}
+      candidate_frontend_image_id: ${{ steps.publish.outputs.frontend_image_id }}
+
+    steps:
+      - name: Checkout trusted release deployment code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.sha }}
+          path: trusted
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Checkout release batch commit
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ inputs.candidate_sha }}
+          path: candidate
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify trusted source and candidate identity
+        id: identity
+        env:
+          RELEASE_CANDIDATE_REF: ${{ inputs.candidate_ref }}
+          RELEASE_CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          RELEASE_BATCH_ID: ${{ inputs.release_batch_id }}
+        run: |
+          set -euo pipefail
+          trusted_main_sha="$(git -C trusted rev-parse HEAD)"
+          candidate_sha="$(git -C candidate rev-parse HEAD)"
+
+          test "$trusted_main_sha" = "$(git -C trusted rev-parse origin/main)"
+          printf '%s' "$RELEASE_CANDIDATE_SHA" | grep -Eq '^[0-9a-f]{40}$'
+          printf '%s' "$RELEASE_BATCH_ID" | grep -Eq '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$'
+          case "$RELEASE_CANDIDATE_REF" in
+            release/batch-*) ;;
+            *) echo "Release candidate ref must use release/batch-*" >&2; exit 1 ;;
+          esac
+          test "$candidate_sha" = "$RELEASE_CANDIDATE_SHA"
+          git -C candidate merge-base --is-ancestor "$trusted_main_sha" "$candidate_sha"
+
+          protected_paths=()
+          while IFS= read -r -d '' changed_path; do
+            case "$changed_path" in
+              .github/*|\
+              .workflow/*|\
+              backend-springboot/.mvn/*|\
+              backend-springboot/Dockerfile|\
+              backend-springboot/pom.xml|\
+              backend-springboot/mvnw|\
+              backend-springboot/mvnw.cmd|\
+              deploy/release-agent/*|\
+              deploy/actions-runner-job-guard.sh|\
+              deploy/verify_release_batch_clean_db.sh|\
+              deploy/docker-compose.release-control.yml|\
+              deploy/docker-compose.prod.yml|\
+              deploy/docker-compose.test.yml|\
+              deploy/configure_test_feishu_notifications.sh|\
+              deploy/prepare_test_gitee_reconciliation.sh|\
+              deploy/deploy_local_runner.sh|\
+              deploy/pull_immutable_images.sh|\
+              deploy/verify_candidate_image_archive.py|\
+              deploy/verify_production_baseline.sh|\
+              deploy/deploy_test_gitee.sh|\
+              deploy/deploy_test_runner.sh|\
+              deploy/gitee_test_deploy_bootstrap.sh|\
+              deploy/install_gitee_test_deploy_cron.sh|\
+              deploy/db/test-init/*|\
+              frontend-vue/deploy/nginx/test.conf|\
+              frontend-vue/deploy/nginx/test-feishu-egress.conf|\
+              frontend-vue/deploy/nginx/default.conf|\
+              frontend-vue/Dockerfile|\
+              frontend-vue/package.json|\
+              frontend-vue/package-lock.json|\
+              frontend-vue/.npmrc)
+                protected_paths+=("$changed_path")
+                ;;
+            esac
+          done < <(git -C candidate diff --no-renames --name-only -z "$trusted_main_sha...$candidate_sha")
+          if [ "${#protected_paths[@]}" -ne 0 ]; then
+            printf 'Release batch modifies protected infrastructure: %s\n' "${protected_paths[@]}" >&2
+            exit 1
+          fi
+
+          if git -C candidate ls-tree -r --full-tree HEAD | awk '$1 == "120000" { found=1 } END { exit(found ? 0 : 1) }'; then
+            echo "Candidate repositories may not contain symbolic links" >&2
+            exit 1
+          fi
+
+          repository_owner="${GITHUB_REPOSITORY_OWNER,,}"
+          repository_name="${GITHUB_REPOSITORY#*/}"
+          repository_name="${repository_name,,}"
+          backend_image="ghcr.io/$repository_owner/${repository_name}-backend:test-$candidate_sha"
+          frontend_image="ghcr.io/$repository_owner/${repository_name}-frontend:test-$candidate_sha"
+          {
+            echo "candidate_sha=$candidate_sha"
+            echo "candidate_base_sha=$trusted_main_sha"
+            echo "backend_image=$backend_image"
+            echo "frontend_image=$frontend_image"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build backend candidate without private credentials
+        run: docker build --tag "${{ steps.identity.outputs.backend_image }}" candidate/backend-springboot
+
+      - name: Build frontend candidate without private credentials
+        run: |
+          docker build \
+            --build-arg VITE_APP_ENV=test \
+            --build-arg VITE_BUILD_REF="${{ steps.identity.outputs.candidate_sha }}" \
+            --tag "${{ steps.identity.outputs.frontend_image }}" \
+            candidate/frontend-vue
+
+      - name: Publish immutable candidate images
+        id: publish
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          docker push "${{ steps.identity.outputs.backend_image }}"
+          docker push "${{ steps.identity.outputs.frontend_image }}"
+
+          resolve_pushed_digest() {
+            local tag="$1"
+            local repository="${tag%:*}"
+            local ref
+            local -a matches=()
+            while IFS= read -r ref; do
+              case "$ref" in
+                "$repository"@sha256:*) matches+=("$ref") ;;
+              esac
+            done < <(docker image inspect "$tag" --format '{{range .RepoDigests}}{{println .}}{{end}}')
+            test "${#matches[@]}" = "1"
+            printf '%s' "${matches[0]}" | grep -Eq '^ghcr\.io/[a-z0-9._/-]+@sha256:[0-9a-f]{64}$'
+            printf '%s' "${matches[0]}"
+          }
+
+          backend_image="$(resolve_pushed_digest "${{ steps.identity.outputs.backend_image }}")"
+          frontend_image="$(resolve_pushed_digest "${{ steps.identity.outputs.frontend_image }}")"
+          backend_image_id="$(docker image inspect "${{ steps.identity.outputs.backend_image }}" --format '{{.Id}}')"
+          frontend_image_id="$(docker image inspect "${{ steps.identity.outputs.frontend_image }}" --format '{{.Id}}')"
+          printf '%s' "$backend_image_id" | grep -Eq '^sha256:[0-9a-f]{64}$'
+          printf '%s' "$frontend_image_id" | grep -Eq '^sha256:[0-9a-f]{64}$'
+          {
+            echo "backend_image=$backend_image"
+            echo "frontend_image=$frontend_image"
+            echo "backend_image_id=$backend_image_id"
+            echo "frontend_image_id=$frontend_image_id"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Package optional candidate image archive
+        id: archive
+        continue-on-error: true
+        timeout-minutes: 10
+        env:
+          CANDIDATE_SHA: ${{ steps.identity.outputs.candidate_sha }}
+          BACKEND_TAG: ${{ steps.identity.outputs.backend_image }}
+          FRONTEND_TAG: ${{ steps.identity.outputs.frontend_image }}
+          BACKEND_IMAGE: ${{ steps.publish.outputs.backend_image }}
+          FRONTEND_IMAGE: ${{ steps.publish.outputs.frontend_image }}
+        run: |
+          set -euo pipefail
+          umask 077
+          if ! [[ "$GITHUB_RUN_ID" =~ ^[1-9][0-9]*$ && "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]; then
+            echo "Invalid candidate cache run identity" >&2
+            exit 1
+          fi
+          cache_root="$GITHUB_WORKSPACE/.release-cache"
+          archive_dir="$cache_root/procurement-candidate-images-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          rm -rf -- "$cache_root"
+          install -d -m 0700 "$archive_dir"
+
+          backend_image_id="$(docker image inspect "$BACKEND_TAG" --format '{{.Id}}')"
+          frontend_image_id="$(docker image inspect "$FRONTEND_TAG" --format '{{.Id}}')"
+          printf '%s' "$backend_image_id" | grep -Eq '^sha256:[0-9a-f]{64}$'
+          printf '%s' "$frontend_image_id" | grep -Eq '^sha256:[0-9a-f]{64}$'
+          docker image inspect "$BACKEND_TAG" --format '{{range .RepoDigests}}{{println .}}{{end}}' |
+            grep -Fx "$BACKEND_IMAGE"
+          docker image inspect "$FRONTEND_TAG" --format '{{range .RepoDigests}}{{println .}}{{end}}' |
+            grep -Fx "$FRONTEND_IMAGE"
+
+          docker save "$BACKEND_TAG" "$FRONTEND_TAG" |
+            gzip -1 > "$archive_dir/candidate-images.tar.gz"
+          test -s "$archive_dir/candidate-images.tar.gz"
+          archive_sha256="$(sha256sum "$archive_dir/candidate-images.tar.gz" | awk '{print $1}')"
+          printf '%s' "$archive_sha256" | grep -Eq '^[0-9a-f]{64}$'
+          printf '%s  %s\n' "$archive_sha256" candidate-images.tar.gz \
+            > "$archive_dir/candidate-images.tar.gz.sha256"
+
+          printf '%s\n' \
+            "schema_version=1" \
+            "candidate_sha=$CANDIDATE_SHA" \
+            "archive_sha256=$archive_sha256" \
+            "backend_image=$BACKEND_IMAGE" \
+            "backend_image_id=$backend_image_id" \
+            "frontend_image=$FRONTEND_IMAGE" \
+            "frontend_image_id=$frontend_image_id" \
+            > "$archive_dir/candidate-images.manifest"
+
+          {
+            echo "archive_sha256=$archive_sha256"
+            echo "backend_image_id=$backend_image_id"
+            echo "frontend_image_id=$frontend_image_id"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Save optional candidate image archive cache
+        id: archive_cache
+        if: steps.archive.outcome == 'success'
+        continue-on-error: true
+        timeout-minutes: 15
+        uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: .release-cache/procurement-candidate-images-${{ github.run_id }}-${{ github.run_attempt }}
+          key: candidate-images-${{ github.run_id }}-${{ github.run_attempt }}-${{ steps.identity.outputs.candidate_sha }}
+
+      - name: Report optional archive cache fallback
+        if: always() && steps.publish.outcome == 'success' && (steps.archive.outcome != 'success' || steps.archive_cache.outcome != 'success')
+        run: echo "::warning title=Candidate archive cache unavailable::Test and production will fall back to the exact GHCR digests."
+
+      - name: Remove registry credentials from isolated runner
+        if: always()
+        run: |
+          docker logout ghcr.io >/dev/null 2>&1 || true
+          if [[ "$GITHUB_RUN_ID" =~ ^[1-9][0-9]*$ && "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]; then
+            rm -rf -- "$GITHUB_WORKSPACE/.release-cache"
+          fi
+
+  deploy:
+    name: Verify release batch on procurement-151
+    needs: build
+    runs-on: [self-hosted, procurement-test]
+    timeout-minutes: 360
+    permissions:
+      actions: read
+      contents: read
+      packages: read
+
+    steps:
+      - name: Checkout trusted deployment code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ needs.build.outputs.candidate_base_sha }}
+          path: trusted
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Checkout exact candidate source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ needs.build.outputs.candidate_sha }}
+          path: candidate
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify exact candidate source
+        run: |
+          set -euo pipefail
+          test "$(git -C trusted rev-parse HEAD)" = "${{ needs.build.outputs.candidate_base_sha }}"
+          test "$(git -C candidate rev-parse HEAD)" = "${{ needs.build.outputs.candidate_sha }}"
+          git -C candidate merge-base --is-ancestor "${{ needs.build.outputs.candidate_base_sha }}" "${{ needs.build.outputs.candidate_sha }}"
+          if git -C candidate ls-tree -r --full-tree HEAD | awk '$1 == "120000" { found=1 } END { exit(found ? 0 : 1) }'; then
+            echo "Candidate repositories may not contain symbolic links" >&2
+            exit 1
+          fi
+
+      - name: Verify trusted test runner guard
+        run: |
+          set -euo pipefail
+          runner_guard=/home/ceshi/.local/libexec/procurement-actions-runner-guard.sh
+          runner_env=/home/ceshi/actions-runner/.env
+          test -x "$runner_guard"
+          test ! -L "$runner_guard"
+          test "$(stat -c '%a:%U' "$runner_guard")" = "700:ceshi"
+          cmp -s trusted/deploy/actions-runner-job-guard.sh "$runner_guard"
+          test ! -L "$runner_env"
+          test "$(stat -c '%a:%U' "$runner_env")" = "600:ceshi"
+          grep -Fx 'PROCUREMENT_RUNNER_ROLE=test' "$runner_env"
+          grep -Fx "ACTIONS_RUNNER_HOOK_JOB_STARTED=$runner_guard" "$runner_env"
+
+      - name: Prepare optional candidate image archive cache
+        id: archive_prepare
+        if: needs.build.outputs.candidate_archive_sha256 != ''
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          if ! [[ "$GITHUB_RUN_ID" =~ ^[1-9][0-9]*$ && "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]; then
+            echo "Invalid candidate cache run identity" >&2
+            exit 1
+          fi
+          cache_root="$GITHUB_WORKSPACE/.release-cache"
+          archive_dir="$cache_root/procurement-candidate-images-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          if [ -L "$cache_root" ] || [ -L "$archive_dir" ]; then
+            echo "Candidate cache directory may not be a symbolic link" >&2
+            exit 1
+          fi
+          rm -rf -- "$cache_root"
+          install -d -m 0700 "$archive_dir"
+
+      - name: Restore optional candidate image archive cache
+        id: archive_restore
+        if: steps.archive_prepare.outcome == 'success'
+        continue-on-error: true
+        timeout-minutes: 20
+        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: .release-cache/procurement-candidate-images-${{ github.run_id }}-${{ github.run_attempt }}
+          key: candidate-images-${{ github.run_id }}-${{ github.run_attempt }}-${{ needs.build.outputs.candidate_sha }}
+          fail-on-cache-miss: false
+
+      - name: Report optional archive cache restore fallback
+        if: always() && needs.build.outputs.candidate_archive_sha256 != '' && (steps.archive_prepare.outcome != 'success' || steps.archive_restore.outcome != 'success' || steps.archive_restore.outputs.cache-hit != 'true')
+        run: echo "::warning title=Candidate archive cache unavailable::Release test will continue with the exact GHCR digests."
+
+      - name: Load verified optional candidate image archive
+        id: archive_load
+        if: steps.archive_restore.outcome == 'success' && steps.archive_restore.outputs.cache-hit == 'true'
+        continue-on-error: true
+        timeout-minutes: 10
+        env:
+          CANDIDATE_SHA: ${{ needs.build.outputs.candidate_sha }}
+          BACKEND_IMAGE: ${{ needs.build.outputs.backend_image }}
+          FRONTEND_IMAGE: ${{ needs.build.outputs.frontend_image }}
+          EXPECTED_ARCHIVE_SHA256: ${{ needs.build.outputs.candidate_archive_sha256 }}
+          EXPECTED_BACKEND_IMAGE_ID: ${{ needs.build.outputs.candidate_backend_image_id }}
+          EXPECTED_FRONTEND_IMAGE_ID: ${{ needs.build.outputs.candidate_frontend_image_id }}
+        run: |
+          set -Eeuo pipefail
+          cache_root="$GITHUB_WORKSPACE/.release-cache"
+          archive_dir="$cache_root/procurement-candidate-images-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          archive_path="$archive_dir/candidate-images.tar.gz"
+          backend_repository="${BACKEND_IMAGE%@*}"
+          frontend_repository="${FRONTEND_IMAGE%@*}"
+          backend_tag="${backend_repository}:test-${CANDIDATE_SHA}"
+          frontend_tag="${frontend_repository}:test-${CANDIDATE_SHA}"
+          cleanup_failed_archive() {
+            docker image rm "$backend_tag" "$frontend_tag" >/dev/null 2>&1 || true
+            rm -rf -- "$cache_root"
+          }
+          trap cleanup_failed_archive ERR
+
+          python3 trusted/deploy/verify_candidate_image_archive.py \
+            --archive-dir "$archive_dir" \
+            --candidate-sha "$CANDIDATE_SHA" \
+            --backend-image "$BACKEND_IMAGE" \
+            --frontend-image "$FRONTEND_IMAGE" \
+            --expected-archive-sha256 "$EXPECTED_ARCHIVE_SHA256" \
+            --expected-backend-image-id "$EXPECTED_BACKEND_IMAGE_ID" \
+            --expected-frontend-image-id "$EXPECTED_FRONTEND_IMAGE_ID"
+
+          docker load --input "$archive_path"
+          docker image inspect "$backend_tag" >/dev/null
+          docker image inspect "$frontend_tag" >/dev/null
+          rm -rf -- "$cache_root"
+          trap - ERR
+
+      - name: Report optional archive load fallback
+        if: always() && steps.archive_restore.outcome == 'success' && steps.archive_restore.outputs.cache-hit == 'true' && steps.archive_load.outcome != 'success'
+        run: echo "::warning title=Candidate archive rejected::Archive cleanup completed; release test will continue with the exact GHCR digests."
+
+      - name: Pull immutable candidate images
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+          CANDIDATE_ARCHIVE_LOADED: ${{ steps.archive_load.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          export DOCKER_CONFIG="$RUNNER_TEMP/procurement-ghcr"
+          crane_version=0.21.7
+          crane_archive_sha256=1a57bc98207fa1c0d04bf760699099e26f8383499bfd55b99c1b919a928a7230
+          crane_tool_cache=/home/ceshi/.cache/procurement-release-tools
+          crane_layer_cache=/home/ceshi/.cache/procurement-ghcr-layers
+          crane_archive="$crane_tool_cache/go-containerregistry_Linux_x86_64-${crane_version}.tar.gz"
+          crane_extract_dir="$RUNNER_TEMP/procurement-crane"
+          crane_bin="$crane_extract_dir/crane"
+          rm -rf -- "$DOCKER_CONFIG"
+          install -d -m 0700 "$DOCKER_CONFIG"
+          install -d -m 0700 "$crane_tool_cache" "$crane_layer_cache"
+          cleanup_registry_auth() {
+            docker logout ghcr.io >/dev/null 2>&1 || true
+            rm -rf -- "$DOCKER_CONFIG"
+          }
+          trap cleanup_registry_auth EXIT
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+
+          verify_crane_archive() {
+            printf '%s  %s\n' "$crane_archive_sha256" "$crane_archive" | sha256sum --check --status
+          }
+
+          install_crane() {
+            local download_path="$RUNNER_TEMP/go-containerregistry_Linux_x86_64.tar.gz"
+            if ! verify_crane_archive; then
+              rm -f -- "$download_path"
+              timeout 30m curl \
+                --http1.1 \
+                --location \
+                --fail \
+                --show-error \
+                --silent \
+                --retry 20 \
+                --retry-all-errors \
+                --retry-delay 5 \
+                --connect-timeout 20 \
+                --speed-time 120 \
+                --speed-limit 1024 \
+                --output "$download_path" \
+                "https://github.com/google/go-containerregistry/releases/download/v${crane_version}/go-containerregistry_Linux_x86_64.tar.gz"
+              printf '%s  %s\n' "$crane_archive_sha256" "$download_path" | sha256sum --check --status
+              install -m 0600 "$download_path" "$crane_archive"
+            fi
+            case "$crane_extract_dir" in
+              "$RUNNER_TEMP"/*) ;;
+              *) echo "Invalid crane extraction path" >&2; return 1 ;;
+            esac
+            rm -rf -- "$crane_extract_dir"
+            install -d -m 0700 "$crane_extract_dir"
+            tar -xzf "$crane_archive" -C "$crane_extract_dir" crane
+            chmod 0700 "$crane_bin"
+            test "$("$crane_bin" version)" = "$crane_version"
+          }
+
+          register_digest_with_docker() {
+            local image="$1"
+            local max_attempts=3
+            local attempt=1
+            local delay
+            while [ "$attempt" -le "$max_attempts" ]; do
+              if timeout 5m docker pull "$image"; then
+                return 0
+              fi
+              if [ "$attempt" -eq "$max_attempts" ]; then
+                echo "docker could not register candidate digest after ${max_attempts} attempts: ${image}" >&2
+                return 1
+              fi
+              delay=$((attempt * 15))
+              echo "docker digest registration failed for ${image}; retrying in ${delay}s" >&2
+              sleep "$delay"
+              attempt=$((attempt + 1))
+            done
+          }
+
+          pull_with_verified_cache() {
+            local image="$1"
+            local image_name="$2"
+            local repository="${image%@*}"
+            local expected_digest="${image#*@}"
+            local candidate_tag="${repository}:test-${{ needs.build.outputs.candidate_sha }}"
+            local actual_digest
+            local tar_path="$RUNNER_TEMP/${image_name}-candidate.tar"
+            local max_attempts=3
+            local attempt=1
+            if [ "$CANDIDATE_ARCHIVE_LOADED" = "true" ]; then
+              docker image inspect "$candidate_tag" >/dev/null
+              if ! docker image inspect "$image" >/dev/null 2>&1; then
+                register_digest_with_docker "$image"
+              fi
+              docker image inspect "$image" >/dev/null
+              return 0
+            fi
+
+            if docker image inspect "$image" >/dev/null 2>&1; then
+              return 0
+            fi
+
+            if timeout 3m docker pull "$image"; then
+              return 0
+            fi
+
+            actual_digest="$(GODEBUG=http2client=0 "$crane_bin" digest "$candidate_tag")"
+            test "$actual_digest" = "$expected_digest"
+
+            while [ "$attempt" -le "$max_attempts" ]; do
+              rm -f -- "$tar_path"
+              if timeout 35m env GODEBUG=http2client=0 "$crane_bin" pull \
+                --platform=linux/amd64 \
+                --cache_path="$crane_layer_cache" \
+                "$candidate_tag" \
+                "$tar_path"; then
+                docker load --input "$tar_path"
+                rm -f -- "$tar_path"
+                register_digest_with_docker "$image"
+                docker image inspect "$image" >/dev/null
+                return 0
+              fi
+              if [ "$attempt" -eq "$max_attempts" ]; then
+                echo "verified HTTP/1.1 candidate pull failed after ${max_attempts} attempts: ${image}" >&2
+                return 1
+              fi
+              echo "verified candidate pull failed for ${image}; completed layers remain cached" >&2
+              sleep $((attempt * 15))
+              attempt=$((attempt + 1))
+            done
+          }
+
+          if [ "$CANDIDATE_ARCHIVE_LOADED" != "true" ]; then
+            install_crane
+          fi
+          pull_with_verified_cache "${{ needs.build.outputs.backend_image }}" backend
+          pull_with_verified_cache "${{ needs.build.outputs.frontend_image }}" frontend
+          verify_registered_digest() {
+            local image="$1"
+            docker image inspect "$image" >/dev/null
+            docker image inspect "$image" --format '{{range .RepoDigests}}{{println .}}{{end}}' |
+              grep -Fx "$image"
+          }
+          verify_registered_digest "${{ needs.build.outputs.backend_image }}"
+          verify_registered_digest "${{ needs.build.outputs.frontend_image }}"
+          cleanup_registry_auth
+          trap - EXIT
+
+      - name: Deploy isolated test environment with trusted runner
+        env:
+          TEST_SOURCE_ROOT: ${{ github.workspace }}/candidate
+          TEST_BUILD_REF: ${{ needs.build.outputs.candidate_sha }}
+          TEST_MIGRATION_BASE_REF: ${{ needs.build.outputs.candidate_base_sha }}
+          TEST_BACKEND_IMAGE: ${{ needs.build.outputs.backend_image }}
+          TEST_FRONTEND_IMAGE: ${{ needs.build.outputs.frontend_image }}
+          RELEASE_BATCH_ID: ${{ inputs.release_batch_id }}
+        run: bash trusted/deploy/deploy_test_runner.sh
+
+      - name: Remove registry credentials from test runner
+        if: always()
+        run: |
+          rm -rf -- \
+            "$RUNNER_TEMP/procurement-ghcr" \
+            "$RUNNER_TEMP/procurement-crane"
+          if [[ "$GITHUB_RUN_ID" =~ ^[1-9][0-9]*$ && "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]; then
+            rm -rf -- "$GITHUB_WORKSPACE/.release-cache"
+          fi
+
+      - name: Publish test links
+        run: |
+          {
+            echo "### Release batch test environment"
+            echo "- Platform: http://192.168.132.151:18080/"
+            echo "- Swagger: http://192.168.132.151:18080/swagger-ui/index.html"
+            echo "- OpenAPI: http://192.168.132.151:18080/v3/api-docs"
+            echo "- Tested commit: ${{ needs.build.outputs.candidate_sha }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  cleanup_failed_cache:
+    name: Delete candidate image cache after failed test
+    if: always() && needs.build.outputs.candidate_archive_sha256 != '' && needs.deploy.result != 'success'
+    needs:
+      - build
+      - deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+      contents: read
+
+    steps:
+      - name: Delete exact failed candidate cache
+        id: cleanup
+        continue-on-error: true
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        env:
+          CANDIDATE_CACHE_KEY: candidate-images-${{ github.run_id }}-${{ github.run_attempt }}-${{ needs.build.outputs.candidate_sha }}
+        with:
+          script: |
+            const cacheKey = process.env.CANDIDATE_CACHE_KEY || "";
+            if (!/^candidate-images-[1-9][0-9]*-[1-9][0-9]*-[0-9a-f]{40}$/.test(cacheKey)) {
+              throw new Error("candidate cache key is invalid");
+            }
+            const response = await github.rest.actions.getActionsCacheList({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              key: cacheKey,
+              per_page: 100
+            });
+            const matches = response.data.actions_caches.filter(cache => cache.key === cacheKey);
+            for (const cache of matches) {
+              await github.rest.actions.deleteActionsCacheById({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                cache_id: cache.id
+              });
+            }
+            core.info(`Deleted ${matches.length} failed candidate cache entr${matches.length === 1 ? 'y' : 'ies'}.`);
+
+      - name: Report failed candidate cache cleanup
+        if: always() && steps.cleanup.outcome != 'success'
+        run: echo "::warning title=Candidate cache cleanup failed::The failed release cache will remain until normal GitHub eviction."

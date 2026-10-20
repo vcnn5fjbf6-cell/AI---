@@ -1,0 +1,476 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:enterprise-procurement-platform:module-manifest:1.0",
+  "title": "企业平台模块接入清单",
+  "description": "用于描述一个模块如何接入前端、后端、权限、数据、流程、测试和文档。清单不得包含凭据或生产数据。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "moduleCode",
+    "displayName",
+    "summary",
+    "status",
+    "exampleOnly",
+    "application",
+    "frontend",
+    "backend",
+    "database",
+    "workflow",
+    "verification",
+    "documentation",
+    "security",
+    "release"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "1.0"
+    },
+    "moduleCode": {
+      "type": "string",
+      "pattern": "^[A-Z][A-Z0-9_]{2,63}$",
+      "description": "稳定、不可随意改名的模块编码。"
+    },
+    "displayName": {
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 80
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 10,
+      "maxLength": 300
+    },
+    "status": {
+      "enum": [
+        "PLANNED",
+        "DEVELOPMENT",
+        "TEST",
+        "ENABLED"
+      ]
+    },
+    "exampleOnly": {
+      "type": "boolean",
+      "description": "示例文件必须为 true，真实模块清单必须为 false。"
+    },
+    "application": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "appCode",
+        "appCodeStatus",
+        "workbenchSources"
+      ],
+      "properties": {
+        "mode": {
+          "enum": [
+            "EXTEND_EXISTING",
+            "NEW_APPLICATION"
+          ]
+        },
+        "appCode": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9_]{2,63}$"
+        },
+        "appCodeStatus": {
+          "enum": [
+            "EXISTING",
+            "PROPOSED",
+            "APPROVED"
+          ]
+        },
+        "workbenchSources": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9_]{1,63}$"
+          }
+        }
+      }
+    },
+    "frontend": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pages",
+        "apiFiles",
+        "routes",
+        "menuEntries"
+      ],
+      "properties": {
+        "pages": {
+          "$ref": "#/$defs/repositoryPaths"
+        },
+        "apiFiles": {
+          "$ref": "#/$defs/repositoryPaths"
+        },
+        "routes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "path",
+              "page",
+              "appCodes",
+              "roles",
+              "permissions"
+            ],
+            "properties": {
+              "path": {
+                "type": "string",
+                "pattern": "^/"
+              },
+              "page": {
+                "$ref": "#/$defs/repositoryPath"
+              },
+              "appCodes": {
+                "$ref": "#/$defs/nonEmptyCodes"
+              },
+              "roles": {
+                "$ref": "#/$defs/codes"
+              },
+              "permissions": {
+                "$ref": "#/$defs/permissionCodes"
+              }
+            }
+          }
+        },
+        "menuEntries": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "key",
+              "label",
+              "path",
+              "appCodes",
+              "roles",
+              "permissions"
+            ],
+            "properties": {
+              "key": {
+                "type": "string",
+                "minLength": 2
+              },
+              "label": {
+                "type": "string",
+                "minLength": 2
+              },
+              "path": {
+                "type": "string",
+                "pattern": "^/"
+              },
+              "appCodes": {
+                "$ref": "#/$defs/nonEmptyCodes"
+              },
+              "roles": {
+                "$ref": "#/$defs/codes"
+              },
+              "permissions": {
+                "$ref": "#/$defs/permissionCodes"
+              }
+            }
+          }
+        }
+      }
+    },
+    "backend": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "packageRoot",
+        "apiPrefixes",
+        "controllers",
+        "services",
+        "requiredAppCodes",
+        "permissionCodes",
+        "objectScopeChecks"
+      ],
+      "properties": {
+        "packageRoot": {
+          "type": "string",
+          "pattern": "^backend-springboot/src/main/java/"
+        },
+        "apiPrefixes": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^/api/"
+          }
+        },
+        "controllers": {
+          "$ref": "#/$defs/repositoryPaths"
+        },
+        "services": {
+          "$ref": "#/$defs/repositoryPaths"
+        },
+        "requiredAppCodes": {
+          "$ref": "#/$defs/nonEmptyCodes"
+        },
+        "permissionCodes": {
+          "$ref": "#/$defs/permissionCodes"
+        },
+        "objectScopeChecks": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 5,
+            "maxLength": 300
+          }
+        }
+      }
+    },
+    "database": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "required",
+        "migrationFiles",
+        "idempotent",
+        "destructive",
+        "dataRepairScope",
+        "recoveryEvidence"
+      ],
+      "properties": {
+        "required": {
+          "type": "boolean"
+        },
+        "migrationFiles": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^backend-springboot/sql/zz_.*\\.sql$"
+          }
+        },
+        "idempotent": {
+          "const": true
+        },
+        "destructive": {
+          "const": false
+        },
+        "dataRepairScope": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300
+        },
+        "recoveryEvidence": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300
+        }
+      }
+    },
+    "workflow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "touchesWorkflow",
+        "reusesExistingServices",
+        "entryServices",
+        "statesReused",
+        "auditRecordsReused",
+        "newBranchApproved"
+      ],
+      "properties": {
+        "touchesWorkflow": {
+          "type": "boolean"
+        },
+        "reusesExistingServices": {
+          "type": "boolean"
+        },
+        "entryServices": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 2
+          }
+        },
+        "statesReused": {
+          "$ref": "#/$defs/codes"
+        },
+        "auditRecordsReused": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 2
+          }
+        },
+        "newBranchApproved": {
+          "type": "boolean"
+        }
+      }
+    },
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "backendTests",
+        "frontendChecks",
+        "manualCases",
+        "accessCheckPassed",
+        "secretScanPassed",
+        "openapiReviewed",
+        "prBuildPassed"
+      ],
+      "properties": {
+        "backendTests": {
+          "$ref": "#/$defs/commands"
+        },
+        "frontendChecks": {
+          "$ref": "#/$defs/commands"
+        },
+        "manualCases": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 5
+          }
+        },
+        "accessCheckPassed": {
+          "type": "boolean"
+        },
+        "secretScanPassed": {
+          "type": "boolean"
+        },
+        "openapiReviewed": {
+          "type": "boolean"
+        },
+        "prBuildPassed": {
+          "type": "boolean"
+        }
+      }
+    },
+    "documentation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "files",
+        "openapiUpdated",
+        "behaviorDocsUpdated"
+      ],
+      "properties": {
+        "files": {
+          "$ref": "#/$defs/repositoryPaths"
+        },
+        "openapiUpdated": {
+          "type": "boolean"
+        },
+        "behaviorDocsUpdated": {
+          "type": "boolean"
+        }
+      }
+    },
+    "security": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "containsSecrets",
+        "requiresProductionAccess",
+        "sensitiveFields"
+      ],
+      "properties": {
+        "containsSecrets": {
+          "const": false
+        },
+        "requiresProductionAccess": {
+          "const": false
+        },
+        "sensitiveFields": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 2
+          }
+        }
+      }
+    },
+    "release": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "target",
+        "productionAuthorized",
+        "postDeploySmoke"
+      ],
+      "properties": {
+        "target": {
+          "enum": [
+            "LOCAL",
+            "TEST"
+          ]
+        },
+        "productionAuthorized": {
+          "const": false
+        },
+        "postDeploySmoke": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 5
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "repositoryPath": {
+      "type": "string",
+      "minLength": 2,
+      "pattern": "^(frontend-vue|backend-springboot|docs|deploy)/"
+    },
+    "repositoryPaths": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/repositoryPath"
+      }
+    },
+    "codes": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Z][A-Z0-9_]{1,63}$"
+      }
+    },
+    "nonEmptyCodes": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Z][A-Z0-9_]{1,63}$"
+      }
+    },
+    "permissionCodes": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9_]*(?::[a-z][a-z0-9_]*)+$"
+      }
+    },
+    "commands": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 3
+      }
+    }
+  }
+}

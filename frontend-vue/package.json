@@ -1,0 +1,34 @@
+{
+  "name": "enterprise-procurement-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "typecheck": "vue-tsc --noEmit",
+    "check:access": "node scripts/check-app-access.mjs",
+    "check:approval-route": "node --experimental-strip-types --test scripts/check-approval-route-candidates.mjs",
+    "check:developer-center": "node scripts/check-developer-center.mjs",
+    "check:outsourcing-shell": "node scripts/check-outsourcing-shell.mjs",
+    "check:procurement-request-department": "node scripts/check-procurement-request-department.mjs",
+    "check:procurement-precheck": "node scripts/check-procurement-precheck.mjs",
+    "check:user-management-region": "node scripts/check-user-management-region.mjs",
+    "build": "vue-tsc --noEmit && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "axios": "^1.8.4",
+    "echarts": "^6.1.0",
+    "element-plus": "^2.9.8",
+    "gridstack": "^11.2.0",
+    "pinia": "^2.3.1",
+    "vue": "^3.5.13",
+    "vue-router": "^4.5.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.7",
+    "typescript": "^5.7.3",
+    "vite": "^8.0.16",
+    "vue-tsc": "^3.3.3"
+  }
+}
