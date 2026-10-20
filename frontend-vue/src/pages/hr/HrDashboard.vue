@@ -25,27 +25,6 @@
       </div>
     </div>
 
-    <section class="hr-panel">
-      <div class="hr-panel-head">
-        <h3>本月人员更新</h3>
-        <span>按时 {{ monthUpdateLogs.length - lateUpdateCount }} 次 · 逾期 {{ lateUpdateCount }} 次（每月 10 号后更新计为逾期）</span>
-      </div>
-      <el-table :data="recentUpdateLogs" size="small" empty-text="本月暂无人员更新记录">
-        <el-table-column prop="date" label="日期" width="110" />
-        <el-table-column prop="operator" label="操作人" width="110" />
-        <el-table-column label="操作" width="90">
-          <template #default="{ row }">{{ actionLabel(row.action) }}</template>
-        </el-table-column>
-        <el-table-column prop="employeeName" label="人员" min-width="110" />
-        <el-table-column prop="building" label="楼栋" width="110" />
-        <el-table-column label="状态" width="100">
-          <template #default="{ row }">
-            <el-tag :type="row.late ? 'danger' : 'success'" size="small">{{ row.late ? "逾期更新" : "按时更新" }}</el-tag>
-          </template>
-        </el-table-column>
-      </el-table>
-    </section>
-
     <div class="hr-panel-grid">
       <section class="hr-panel">
         <div class="hr-panel-head">
@@ -106,6 +85,27 @@
           <span>减少 <b class="down">-{{ item.removed }}</b></span>
         </div>
       </div>
+    </section>
+
+    <section class="hr-panel">
+      <div class="hr-panel-head">
+        <h3>本月人员更新</h3>
+        <span>按时 {{ monthUpdateLogs.length - lateUpdateCount }} 次 · 逾期 {{ lateUpdateCount }} 次（每月 10 号后更新计为逾期）</span>
+      </div>
+      <el-table :data="recentUpdateLogs" size="small" empty-text="本月暂无人员更新记录">
+        <el-table-column prop="date" label="日期" width="110" />
+        <el-table-column prop="operator" label="操作人" width="110" />
+        <el-table-column label="操作" width="90">
+          <template #default="{ row }">{{ actionLabel(row.action) }}</template>
+        </el-table-column>
+        <el-table-column prop="employeeName" label="人员" min-width="110" />
+        <el-table-column prop="building" label="楼栋" width="110" />
+        <el-table-column label="状态" width="100">
+          <template #default="{ row }">
+            <el-tag :type="row.late ? 'danger' : 'success'" size="small">{{ row.late ? "逾期更新" : "按时更新" }}</el-tag>
+          </template>
+        </el-table-column>
+      </el-table>
     </section>
   </VnetPage>
 </template>
