@@ -116,20 +116,88 @@
     <div v-else class="hr-employee-panel">
       <div class="hr-employee-head">
         <strong>考勤管理</strong>
-        <span>打卡签到、请假申请、加班申请</span>
+        <span>提交本人请假、加班申请，并查看个人调休时长</span>
       </div>
+      <el-alert
+        v-if="!myEmployee"
+        type="warning"
+        show-icon
+        :closable="false"
+        title="账号未关联员工档案"
+        description="请联系人力资源管理员核对员工姓名或工号后再提交申请。"
+      />
       <div class="hr-employee-actions">
-        <el-button type="primary" size="large" @click="openCheckin">打卡签到</el-button>
-        <el-button type="success" size="large" @click="openLeaveDialog">请假申请</el-button>
-        <el-button type="warning" size="large" @click="openOvertimeDialog()">加班申请</el-button>
+        <el-button type="primary" size="large" :disabled="!myEmployee" @click="openCheckin">打卡签到</el-button>
+        <el-button type="success" size="large" :disabled="!myEmployee" @click="openLeaveDialog">请假申请</el-button>
+        <el-button type="warning" size="large" :disabled="!myEmployee" @click="openOvertimeDialog()">加班申请</el-button>
       </div>
+
+      <template v-if="myEmployee">
+        <section class="hr-panel">
+          <div class="hr-panel-head">
+            <h3>我的调休时长</h3>
+            <span>仅统计已批准记录；请假按 1 天 = 8 小时扣减</span>
+          </div>
+          <div class="hr-personal-balance">
+            <div class="hr-personal-balance-item">
+              <span>加班总时长</span>
+              <strong>{{ myBalance.overtimeHours }} 小时</strong>
+            </div>
+            <div class="hr-personal-balance-item">
+              <span>请假扣减时长</span>
+              <strong>{{ myBalance.leaveHours }} 小时</strong>
+            </div>
+            <div class="hr-personal-balance-item available">
+              <span>剩余可调休时长</span>
+              <strong>{{ myBalance.availableHours }} 小时</strong>
+            </div>
+          </div>
+        </section>
+
+        <section class="hr-panel">
+          <div class="hr-panel-head"><h3>我的请假申请</h3></div>
+          <div class="hr-table-scroll">
+            <el-table :data="myLeaveRows" size="small" empty-text="暂无请假申请">
+              <el-table-column prop="typeName" label="类型" width="90" />
+              <el-table-column label="起止日期" min-width="190">
+                <template #default="{ row }">{{ row.startDate }} ~ {{ row.endDate }}</template>
+              </el-table-column>
+              <el-table-column prop="days" label="天数" width="70" />
+              <el-table-column prop="reason" label="原因" min-width="160" show-overflow-tooltip />
+              <el-table-column label="状态" width="90">
+                <template #default="{ row }">
+                  <el-tag :type="leaveStatusType(row.status)" size="small">{{ leaveStatusLabel(row.status) }}</el-tag>
+                </template>
+              </el-table-column>
+            </el-table>
+          </div>
+        </section>
+
+        <section class="hr-panel">
+          <div class="hr-panel-head"><h3>我的加班申请</h3></div>
+          <div class="hr-table-scroll">
+            <el-table :data="myOvertimeRows" size="small" empty-text="暂无加班申请">
+              <el-table-column prop="date" label="加班日期" width="120" />
+              <el-table-column label="时长" width="100">
+                <template #default="{ row }">{{ row.hours }} 小时</template>
+              </el-table-column>
+              <el-table-column prop="reason" label="原因" min-width="180" show-overflow-tooltip />
+              <el-table-column label="状态" width="90">
+                <template #default="{ row }">
+                  <el-tag :type="leaveStatusType(row.status)" size="small">{{ leaveStatusLabel(row.status) }}</el-tag>
+                </template>
+              </el-table-column>
+            </el-table>
+          </div>
+        </section>
+      </template>
     </div>
 
 
     <el-dialog v-model="checkinVisible" title="签到" width="420px">
       <el-form label-width="90px">
         <el-form-item label="员工" required>
-          <el-select v-model="checkin.employeeId" style="width: 100%">
+          <el-select v-model="checkin.employeeId" :disabled="!isHrAdmin" style="width: 100%">
             <el-option v-for="emp in visibleEmployees" :key="emp.id" :label="emp.name" :value="emp.id" />
           </el-select>
         </el-form-item>
@@ -171,7 +239,7 @@
     <el-dialog v-model="leaveDialogVisible" title="申请请假" width="480px">
       <el-form label-width="90px">
         <el-form-item label="员工" required>
-          <el-select v-model="leaveForm.employeeId" style="width: 100%">
+          <el-select v-model="leaveForm.employeeId" :disabled="!isHrAdmin" style="width: 100%">
             <el-option v-for="emp in visibleEmployees" :key="emp.id" :label="emp.name" :value="emp.id" />
           </el-select>
         </el-form-item>
@@ -196,7 +264,7 @@
     <el-dialog v-model="overtimeDialogVisible" :title="overtimeEditingId ? '编辑加班记录' : '申请加班'" width="440px">
       <el-form label-width="100px">
         <el-form-item label="员工" required>
-          <el-select v-model="overtimeForm.employeeId" style="width: 100%">
+          <el-select v-model="overtimeForm.employeeId" :disabled="!isHrAdmin" style="width: 100%">
             <el-option v-for="emp in visibleEmployees" :key="emp.id" :label="emp.name" :value="emp.id" />
           </el-select>
         </el-form-item>
@@ -239,7 +307,7 @@ import { computed, onMounted, reactive, ref, watch } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { Check, Plus } from "@element-plus/icons-vue";
 import VnetPage from "../../components/vnet/VnetPage.vue";
-import { useHrStore, type HrAttendanceRecord, type HrOvertimeRecord } from "../../stores/hr";
+import { useHrStore, type HrAttendanceRecord, type HrEmployee, type HrOvertimeRecord } from "../../stores/hr";
 import { useAuthStore } from "../../stores/auth";
 
 const props = defineProps<{ tab?: string }>();
@@ -260,22 +328,31 @@ const leaderBuildings = computed(() => {
   if (!name) return [];
   return buildingLeaders.filter((item) => item.leaders.includes(name)).map((item) => item.building);
 });
+const myEmployee = computed(() => {
+  const user = authStore.user;
+  if (!user) return null;
+  const employeeNo = user.employeeNo?.trim();
+  return (
+    hrStore.employees.find((emp) => emp.platformUserId === user.userId) ??
+    (employeeNo ? hrStore.employees.find((emp) => emp.employeeNo?.trim() === employeeNo) : undefined) ??
+    (user.realName ? hrStore.employees.find((emp) => emp.name.trim() === user.realName.trim()) : undefined) ??
+    null
+  );
+});
 const visibleEmployees = computed(() => {
+  if (!isHrAdmin.value) return myEmployee.value ? [myEmployee.value] : [];
   const ids = visibleEmployeeIds.value;
   return hrStore.employees.filter((emp) => ids.has(emp.id));
 });
 
 const visibleEmployeeIds = computed(() => {
+  if (!isHrAdmin.value) return new Set(myEmployee.value ? [myEmployee.value.id] : []);
   const buildings = leaderBuildings.value;
   if (buildings.length === 0) return new Set(hrStore.employees.map((emp) => emp.id));
   return new Set(hrStore.employees.filter((emp) => buildings.includes(emp.building || "")).map((emp) => emp.id));
 });
 
-const myEmployeeId = computed(() => {
-  const name = authStore.realName;
-  if (!name) return 0;
-  return hrStore.employees.find((emp) => emp.name === name)?.id || hrStore.employees[0]?.id || 0;
-});
+const myEmployeeId = computed(() => myEmployee.value?.id || 0);
 const activeTab = ref(props.tab || "attendance");
 watch(
   () => props.tab,
@@ -398,6 +475,39 @@ const overtimeBalanceRows = computed(() =>
   })
 );
 
+const myBalance = computed(() => {
+  const employeeId = myEmployeeId.value;
+  const overtimeHours = hrStore.overtime
+    .filter((record) => record.employeeId === employeeId && record.status === "approved")
+    .reduce((sum, record) => sum + (Number(record.hours) || 0), 0);
+  const leaveHours = hrStore.leaveRequests
+    .filter((record) => record.employeeId === employeeId && record.status === "approved")
+    .reduce((sum, record) => sum + (Number(record.days) || 0) * 8, 0);
+  return {
+    overtimeHours: Number(overtimeHours.toFixed(2)),
+    leaveHours: Number(leaveHours.toFixed(2)),
+    availableHours: Number(Math.max(0, overtimeHours - leaveHours).toFixed(2))
+  };
+});
+
+const myLeaveRows = computed(() =>
+  hrStore.leaveRequests
+    .filter((record) => record.employeeId === myEmployeeId.value)
+    .slice()
+    .sort((left, right) => right.id - left.id)
+    .map((record) => ({
+      ...record,
+      typeName: leaveTypes.find((type) => type.value === record.type)?.label || record.type
+    }))
+);
+
+const myOvertimeRows = computed(() =>
+  hrStore.overtime
+    .filter((record) => record.employeeId === myEmployeeId.value)
+    .slice()
+    .sort((left, right) => right.id - left.id)
+);
+
 const monthlyReport = computed(() => {
   const records = hrStore.attendance.filter((record) => record.date.startsWith(month) && visibleEmployeeIds.value.has(record.employeeId));
   const map = new Map<number, { present: number; late: number; absent: number }>();
@@ -459,7 +569,7 @@ function overtimeCount(status: string): number {
 
 function openCheckin(): void {
   if (visibleEmployees.value.length === 0) {
-    ElMessage.warning("请先添加人员信息");
+    ElMessage.warning(isHrAdmin.value ? "请先添加人员信息" : "当前账号未关联员工档案，请联系管理员核对姓名或工号");
     return;
   }
   checkin.employeeId = isHrAdmin.value ? visibleEmployees.value[0]?.id : myEmployeeId.value;
@@ -546,7 +656,7 @@ async function removeRecentLeave(): Promise<void> {
 
 function openLeaveDialog(): void {
   if (visibleEmployees.value.length === 0) {
-    ElMessage.warning("请先添加人员信息");
+    ElMessage.warning(isHrAdmin.value ? "请先添加人员信息" : "当前账号未关联员工档案，请联系管理员核对姓名或工号");
     return;
   }
   leaveForm.employeeId = isHrAdmin.value ? visibleEmployees.value[0]?.id : myEmployeeId.value;
@@ -557,6 +667,14 @@ function openLeaveDialog(): void {
 }
 
 function saveLeave(): void {
+  if (!leaveForm.employeeId) {
+    ElMessage.warning("请选择员工");
+    return;
+  }
+  if (!isHrAdmin.value && leaveForm.employeeId !== myEmployeeId.value) {
+    ElMessage.warning("只能为本人提交请假申请");
+    return;
+  }
   const [start, end] = leaveRange.value;
   if (!start || !end || end < start) {
     ElMessage.warning("请选择正确的起止日期");
@@ -597,6 +715,7 @@ async function rejectLeave(row: { id: number }): Promise<void> {
 }
 
 function openOvertimeDialog(record?: HrOvertimeRecord): void {
+  if (!isHrAdmin.value && record && record.employeeId !== myEmployeeId.value) return;
   overtimeEditingId.value = record?.id ?? null;
   overtimeForm.employeeId = record?.employeeId || (isHrAdmin.value ? visibleEmployees.value[0]?.id : myEmployeeId.value) || 0;
   overtimeForm.date = record?.date || today;
@@ -608,6 +727,10 @@ function openOvertimeDialog(record?: HrOvertimeRecord): void {
 function saveOvertime(): void {
   if (!overtimeForm.employeeId || !overtimeForm.date || overtimeForm.hours <= 0) {
     ElMessage.warning("请填写完整信息");
+    return;
+  }
+  if (!isHrAdmin.value && overtimeForm.employeeId !== myEmployeeId.value) {
+    ElMessage.warning("只能为本人提交加班申请");
     return;
   }
   if (overtimeEditingId.value) {
@@ -890,8 +1013,43 @@ onMounted(() => hrStore.load());
   font-weight: 700;
 }
 
+.hr-personal-balance {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  padding: 16px;
+}
+
+.hr-personal-balance-item {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+  border: 1px solid var(--app-line);
+  border-radius: var(--app-radius);
+  background: var(--app-surface-muted);
+}
+
+.hr-personal-balance-item span {
+  color: var(--app-text-muted);
+  font-size: 13px;
+}
+
+.hr-personal-balance-item strong {
+  color: var(--app-primary);
+  font-size: 24px;
+}
+
+.hr-personal-balance-item.available strong {
+  color: var(--app-success);
+}
+
 @media (max-width: 760px) {
   .hr-employee-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .hr-personal-balance {
     grid-template-columns: 1fr;
   }
 }
