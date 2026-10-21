@@ -207,7 +207,6 @@
                 <el-option label="百度M1" value="百度M1" />
                 <el-option label="中化雄安" value="中化雄安" />
                 <el-option label="人寿" value="人寿" />
-                <el-option label="网银" value="网银" />
               </el-select>
             </el-form-item>
           </el-col>

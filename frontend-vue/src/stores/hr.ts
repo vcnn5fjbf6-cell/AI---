@@ -290,6 +290,10 @@ export const useHrStore = defineStore("hr", {
           emp.room = "酒仙桥";
           changed = true;
         }
+        if (emp.building === "网银") {
+          emp.building = "M6";
+          changed = true;
+        }
         if (!emp.region) {
           emp.region = "华北一";
           changed = true;
@@ -365,6 +369,9 @@ export const useHrStore = defineStore("hr", {
     },
 
     persistEmployees(): void {
+      for (const emp of this.employees) {
+        if (emp.building === "网银") emp.building = "M6";
+      }
       writeJson(`${NAMESPACE}employees`, this.employees);
       this.updateStats();
     },
