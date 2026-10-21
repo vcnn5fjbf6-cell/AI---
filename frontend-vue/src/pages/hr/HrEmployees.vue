@@ -10,13 +10,21 @@
       description="请各楼栋楼长在每月10日前完成本月入职、离职及人员信息更新。"
     />
     <el-alert
-      v-if="hrStore.monthUpdateLogs.length > 0"
+      v-if="visibleUpdateLogs.length > 0"
       class="hr-update-reminder"
-      :type="hrStore.lateUpdateCount > 0 ? 'warning' : 'success'"
+      :type="lateUpdateCount > 0 ? 'warning' : 'success'"
       show-icon
       :closable="false"
-      :title="`本月人员更新：${hrStore.monthUpdateLogs.length} 次`"
-      :description="`其中逾期更新 ${hrStore.lateUpdateCount} 次（每月 10 号后更新计为逾期）`"
+      :title="`本月人员更新：${visibleUpdateLogs.length} 次`"
+      :description="`其中逾期更新 ${lateUpdateCount} 次（每月 10 号后更新计为逾期）`"
+    />
+    <el-alert
+      v-if="isFloorLeader && leaderBuildings.length === 0"
+      type="warning"
+      show-icon
+      :closable="false"
+      title="楼长账号未配置负责楼栋"
+      description="当前账号暂时无法查看或维护人员信息，请联系管理员配置负责楼栋。"
     />
     <template #actions>
       <el-button type="primary" :icon="Plus" @click="openDialog()">添加人员</el-button>
@@ -198,15 +206,8 @@
           </el-col>
           <el-col :span="12">
             <el-form-item label="楼栋">
-              <el-select v-model="form.building" style="width: 100%">
-                <el-option label="M6" value="M6" />
-                <el-option label="M3" value="M3" />
-                <el-option label="M5" value="M5" />
-                <el-option label="B28" value="B28" />
-                <el-option label="M6V&M5二三期" value="M6V&M5二三期" />
-                <el-option label="百度M1" value="百度M1" />
-                <el-option label="中化雄安" value="中化雄安" />
-                <el-option label="人寿" value="人寿" />
+              <el-select v-model="form.building" :disabled="isFloorLeader" style="width: 100%">
+                <el-option v-for="item in editableBuildingOptions" :key="item" :label="item" :value="item" />
               </el-select>
             </el-form-item>
           </el-col>
@@ -379,25 +380,35 @@ const rules: FormRules = {
 
 const totalEmployees = computed(() => visibleEmployees.value.length);
 const showPersonnelUpdateReminder = computed(() => new Date().getDate() <= 10);
-const allEmployees = computed(() =>
-  hrStore.employees.map((emp, index) => ({ ...emp, deptNo: index + 1 }))
+const visibleUpdateLogs = computed(() =>
+  hrStore.monthUpdateLogs.filter((item) => !isFloorLeader.value || leaderBuildings.value.includes(item.building || ""))
 );
+const lateUpdateCount = computed(() => visibleUpdateLogs.value.filter((item) => item.late).length);
+const allBuildingOptions = ["M6", "M3", "M5", "B28", "M6V&M5二三期", "百度M1", "中化雄安", "人寿"];
+const allEmployees = computed(() => hrStore.employees);
 
 const leaderBuildings = computed(() => {
-  const name = authStore.realName;
+  const name = authStore.realName.trim();
   if (!name) return [];
-  return buildingLeaders.filter((item) => item.leaders.includes(name)).map((item) => item.building);
+  return buildingLeaders
+    .filter((item) => item.leaders.split("、").map((leader) => leader.trim()).includes(name))
+    .map((item) => item.building);
 });
-const isFloorLeader = computed(() => leaderBuildings.value.length > 0);
+const isFloorLeader = computed(() =>
+  !authStore.hasAnyRole(["SUPER_ADMIN", "ADMIN", "SYS_ADMIN"]) && authStore.hasAnyRole(["FLOOR_LEADER"])
+);
 
 const visibleEmployees = computed(() => {
   const buildings = leaderBuildings.value;
-  if (buildings.length === 0) return allEmployees.value;
-  return allEmployees.value.filter((emp) => buildings.includes(emp.building || ""));
+  const employees = isFloorLeader.value
+    ? allEmployees.value.filter((emp) => buildings.includes(emp.building || ""))
+    : allEmployees.value;
+  return employees.map((emp, index) => ({ ...emp, deptNo: index + 1 }));
 });
 
 const positionOptions = computed(() => Array.from(new Set(visibleEmployees.value.map((item) => item.position).filter(Boolean))));
-const buildingOptions = computed(() => leaderBuildings.value.length > 0 ? leaderBuildings.value : Array.from(new Set(visibleEmployees.value.map((item) => item.building).filter(Boolean))));
+const buildingOptions = computed(() => isFloorLeader.value ? leaderBuildings.value : Array.from(new Set(visibleEmployees.value.map((item) => item.building).filter(Boolean))));
+const editableBuildingOptions = computed(() => isFloorLeader.value ? leaderBuildings.value : allBuildingOptions);
 const companyOptions = computed(() => Array.from(new Set(visibleEmployees.value.map((item) => item.company).filter(Boolean))));
 
 const filteredEmployees = computed(() => {
@@ -444,6 +455,14 @@ function tagOf(position?: string) {
 }
 
 function openDialog(emp?: HrEmployee): void {
+  if (isFloorLeader.value && leaderBuildings.value.length === 0) {
+    ElMessage.warning("当前账号未配置负责楼栋，请联系管理员");
+    return;
+  }
+  if (isFloorLeader.value && emp && !leaderBuildings.value.includes(emp.building || "")) {
+    ElMessage.warning("只能维护本楼栋人员");
+    return;
+  }
   editingId.value = emp?.id ?? null;
   resumeData.value = emp?.resumeData || "";
   resumeName.value = emp?.resumeName || "";
@@ -462,7 +481,7 @@ function openDialog(emp?: HrEmployee): void {
     leaveDate: emp?.leaveDate || "",
     region: emp?.region || "华北一",
     room: emp?.room || "酒仙桥",
-    building: emp?.building || "M6",
+    building: emp?.building || leaderBuildings.value[0] || "M6",
     status: emp?.status === "离职" || emp?.status === "离开" ? "离职" : "在职",
     salary: emp ? hrStore.salaryFor(emp) : 8000,
     aiProfile: emp?.aiProfile || "",
@@ -474,6 +493,10 @@ function openDialog(emp?: HrEmployee): void {
 }
 
 async function save(): Promise<void> {
+  if (isFloorLeader.value && (leaderBuildings.value.length === 0 || !leaderBuildings.value.includes(form.building))) {
+    ElMessage.warning("只能维护本楼栋人员");
+    return;
+  }
   if (!formRef.value) return;
   const valid = await formRef.value.validate().catch(() => false);
   if (!valid) return;
@@ -490,13 +513,9 @@ async function save(): Promise<void> {
   } else {
     delete payload.salary;
   }
-  if (leaderBuildings.value.length > 0 && !leaderBuildings.value.includes(form.building)) {
-    ElMessage.warning("只能维护本楼栋人员");
-    return;
-  }
   if (editingId.value) {
     const target = hrStore.employees.find((item) => item.id === editingId.value);
-    if (leaderBuildings.value.length > 0 && (!target || !leaderBuildings.value.includes(target.building || ""))) {
+    if (isFloorLeader.value && (!target || !leaderBuildings.value.includes(target.building || ""))) {
       ElMessage.warning("只能维护本楼栋人员");
       return;
     }
@@ -615,7 +634,7 @@ function clearCredential(): void {
 }
 
 async function remove(emp: HrEmployee): Promise<void> {
-  if (leaderBuildings.value.length > 0 && !leaderBuildings.value.includes(emp.building || "")) {
+  if (isFloorLeader.value && (leaderBuildings.value.length === 0 || !leaderBuildings.value.includes(emp.building || ""))) {
     ElMessage.warning("只能维护本楼栋人员");
     return;
   }
@@ -656,6 +675,11 @@ async function handleImport(event: Event): Promise<void> {
   const input = event.target as HTMLInputElement;
   const file = input.files?.[0];
   if (!file) return;
+  if (isFloorLeader.value && leaderBuildings.value.length === 0) {
+    ElMessage.warning("当前账号未配置负责楼栋，无法导入人员");
+    input.value = "";
+    return;
+  }
   let rows: string[][];
   try {
     rows = await parseExcelOrCsvFile(file);
@@ -676,7 +700,7 @@ async function handleImport(event: Event): Promise<void> {
     const name = (cols[0] || "").trim();
     if (!name) continue;
     const importedBuilding = (cols[11] || "").trim() || leaderBuildings.value[0] || "M6";
-    if (leaderBuildings.value.length > 0 && !leaderBuildings.value.includes(importedBuilding)) {
+    if (isFloorLeader.value && !leaderBuildings.value.includes(importedBuilding)) {
       skipped += 1;
       continue;
     }

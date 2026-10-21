@@ -1,6 +1,14 @@
 <template>
   <VnetPage title="考勤 / 请假 / 加班">
-    <div v-if="isHrAdmin" class="hr-attendance-dashboard">
+    <div v-if="canManageHr" class="hr-attendance-dashboard">
+      <el-alert
+        v-if="isFloorLeader && !isSystemHrAdmin && leaderBuildings.length === 0"
+        type="warning"
+        show-icon
+        :closable="false"
+        title="楼长账号未配置负责楼栋"
+        description="当前账号暂时无法查看或维护考勤、人事记录，请联系管理员配置负责楼栋。"
+      />
       <div class="hr-quick-actions">
         <el-button type="primary" :icon="Plus" @click="openCheckin">打卡签到</el-button>
         <el-button type="success" :icon="Plus" @click="openLeaveDialog">请假申请</el-button>
@@ -197,7 +205,7 @@
     <el-dialog v-model="checkinVisible" title="签到" width="420px">
       <el-form label-width="90px">
         <el-form-item label="员工" required>
-          <el-select v-model="checkin.employeeId" :disabled="!isHrAdmin" style="width: 100%">
+          <el-select v-model="checkin.employeeId" :disabled="!canManageHr" style="width: 100%">
             <el-option v-for="emp in visibleEmployees" :key="emp.id" :label="emp.name" :value="emp.id" />
           </el-select>
         </el-form-item>
@@ -239,7 +247,7 @@
     <el-dialog v-model="leaveDialogVisible" title="申请请假" width="480px">
       <el-form label-width="90px">
         <el-form-item label="员工" required>
-          <el-select v-model="leaveForm.employeeId" :disabled="!isHrAdmin" style="width: 100%">
+          <el-select v-model="leaveForm.employeeId" :disabled="!canManageHr" style="width: 100%">
             <el-option v-for="emp in visibleEmployees" :key="emp.id" :label="emp.name" :value="emp.id" />
           </el-select>
         </el-form-item>
@@ -264,7 +272,7 @@
     <el-dialog v-model="overtimeDialogVisible" :title="overtimeEditingId ? '编辑加班记录' : '申请加班'" width="440px">
       <el-form label-width="100px">
         <el-form-item label="员工" required>
-          <el-select v-model="overtimeForm.employeeId" :disabled="!isHrAdmin" style="width: 100%">
+          <el-select v-model="overtimeForm.employeeId" :disabled="!canManageHr" style="width: 100%">
             <el-option v-for="emp in visibleEmployees" :key="emp.id" :label="emp.name" :value="emp.id" />
           </el-select>
         </el-form-item>
@@ -313,7 +321,9 @@ import { useAuthStore } from "../../stores/auth";
 const props = defineProps<{ tab?: string }>();
 const hrStore = useHrStore();
 const authStore = useAuthStore();
-const isHrAdmin = computed(() => authStore.hasAnyRole(["SUPER_ADMIN", "ADMIN", "SYS_ADMIN", "FLOOR_LEADER"]));
+const isSystemHrAdmin = computed(() => authStore.hasAnyRole(["SUPER_ADMIN", "ADMIN", "SYS_ADMIN"]));
+const isFloorLeader = computed(() => authStore.hasAnyRole(["FLOOR_LEADER"]));
+const canManageHr = computed(() => isSystemHrAdmin.value || isFloorLeader.value);
 const buildingLeaders = [
   { building: "百度M1", leaders: "张耀" },
   { building: "人寿", leaders: "陈瑶瑶" },
@@ -324,9 +334,11 @@ const buildingLeaders = [
   { building: "M6V&M5二三期", leaders: "张士令、刘燚" }
 ];
 const leaderBuildings = computed(() => {
-  const name = authStore.realName;
+  const name = authStore.realName.trim();
   if (!name) return [];
-  return buildingLeaders.filter((item) => item.leaders.includes(name)).map((item) => item.building);
+  return buildingLeaders
+    .filter((item) => item.leaders.split("、").map((leader) => leader.trim()).includes(name))
+    .map((item) => item.building);
 });
 const myEmployee = computed(() => {
   const user = authStore.user;
@@ -340,16 +352,18 @@ const myEmployee = computed(() => {
   );
 });
 const visibleEmployees = computed(() => {
-  if (!isHrAdmin.value) return myEmployee.value ? [myEmployee.value] : [];
+  if (!canManageHr.value) return myEmployee.value ? [myEmployee.value] : [];
   const ids = visibleEmployeeIds.value;
   return hrStore.employees.filter((emp) => ids.has(emp.id));
 });
 
 const visibleEmployeeIds = computed(() => {
-  if (!isHrAdmin.value) return new Set(myEmployee.value ? [myEmployee.value.id] : []);
-  const buildings = leaderBuildings.value;
-  if (buildings.length === 0) return new Set(hrStore.employees.map((emp) => emp.id));
-  return new Set(hrStore.employees.filter((emp) => buildings.includes(emp.building || "")).map((emp) => emp.id));
+  if (isSystemHrAdmin.value) return new Set(hrStore.employees.map((emp) => emp.id));
+  if (isFloorLeader.value) {
+    const buildings = leaderBuildings.value;
+    return new Set(hrStore.employees.filter((emp) => buildings.includes(emp.building || "")).map((emp) => emp.id));
+  }
+  return new Set(myEmployee.value ? [myEmployee.value.id] : []);
 });
 
 const myEmployeeId = computed(() => myEmployee.value?.id || 0);
@@ -409,7 +423,7 @@ const todayNotChecked = computed(() => Math.max(0, visibleEmployeeIds.value.size
 
 const todayRecords = computed(() =>
   hrStore.attendance
-    .filter((record) => record.date === today)
+    .filter((record) => record.date === today && visibleEmployeeIds.value.has(record.employeeId))
     .map((record) => withEmployee(record))
     .sort((a, b) => b.id - a.id)
 );
@@ -427,13 +441,14 @@ const attendanceEmployeeCount = computed(() => new Set(monthAttendance.value.map
 const filteredAttendance = computed(() => {
   const date = attDate.value;
   return hrStore.attendance
-    .filter((record) => !date || record.date === date)
+    .filter((record) => visibleEmployeeIds.value.has(record.employeeId) && (!date || record.date === date))
     .map((record) => withEmployee(record))
     .sort((a, b) => b.id - a.id);
 });
 
 const filteredLeaves = computed(() =>
   hrStore.leaveRequests
+    .filter((item) => visibleEmployeeIds.value.has(item.employeeId))
     .slice()
     .sort((a, b) => b.id - a.id)
     .map((item) => ({
@@ -449,6 +464,7 @@ const todayOtHours = computed(() => todayOvertime.value.reduce((sum, record) => 
 
 const overtimeRows = computed(() =>
   hrStore.overtime
+    .filter((item) => visibleEmployeeIds.value.has(item.employeeId))
     .slice()
     .sort((a, b) => b.id - a.id)
     .map((item) => ({
@@ -560,19 +576,19 @@ function leaveStatusType(status: string): "warning" | "success" | "danger" {
 }
 
 function leaveCount(status: string): number {
-  return hrStore.leaveRequests.filter((item) => item.status === status).length;
+  return hrStore.leaveRequests.filter((item) => item.status === status && visibleEmployeeIds.value.has(item.employeeId)).length;
 }
 
 function overtimeCount(status: string): number {
-  return hrStore.overtime.filter((item) => item.status === status).length;
+  return hrStore.overtime.filter((item) => item.status === status && visibleEmployeeIds.value.has(item.employeeId)).length;
 }
 
 function openCheckin(): void {
   if (visibleEmployees.value.length === 0) {
-    ElMessage.warning(isHrAdmin.value ? "请先添加人员信息" : "当前账号未关联员工档案，请联系管理员核对姓名或工号");
+    ElMessage.warning(canManageHr.value ? "没有可操作的本楼栋人员信息" : "当前账号未关联员工档案，请联系管理员核对姓名或工号");
     return;
   }
-  checkin.employeeId = isHrAdmin.value ? visibleEmployees.value[0]?.id : myEmployeeId.value;
+  checkin.employeeId = canManageHr.value ? visibleEmployees.value[0]?.id : myEmployeeId.value;
   checkin.date = today;
   checkin.checkIn = new Date().toTimeString().slice(0, 5);
   checkinVisible.value = true;
@@ -581,6 +597,10 @@ function openCheckin(): void {
 function saveCheckin(): void {
   if (!checkin.employeeId) {
     ElMessage.warning("请选择员工");
+    return;
+  }
+  if (!visibleEmployeeIds.value.has(checkin.employeeId)) {
+    ElMessage.warning("只能为有权限的员工登记考勤");
     return;
   }
   if (hrStore.attendance.some((record) => record.employeeId === checkin.employeeId && record.date === checkin.date)) {
@@ -598,29 +618,33 @@ function saveCheckin(): void {
 }
 
 function openCheckout(record: HrAttendanceRecord): void {
+  if (!visibleEmployeeIds.value.has(record.employeeId)) return;
   checkoutRecord.value = record;
   checkoutTime.value = new Date().toTimeString().slice(0, 5);
   checkoutVisible.value = true;
 }
 
 function saveCheckout(): void {
-  if (!checkoutRecord.value) return;
+  if (!checkoutRecord.value || !visibleEmployeeIds.value.has(checkoutRecord.value.employeeId)) return;
   hrStore.updateAttendance(checkoutRecord.value.id, { checkOut: checkoutTime.value });
   ElMessage.success("签退成功");
   checkoutVisible.value = false;
 }
 
 async function removeAttendance(record: HrAttendanceRecord): Promise<void> {
+  const target = hrStore.attendance.find((item) => item.id === record.id);
+  if (!canManageHr.value || !target || !visibleEmployeeIds.value.has(target.employeeId)) return;
   try {
     await ElMessageBox.confirm("确定删除此考勤记录？", "删除确认", { type: "warning" });
   } catch {
     return;
   }
-  hrStore.deleteAttendance(record.id);
+  hrStore.deleteAttendance(target.id);
   ElMessage.success("已删除");
 }
 
 function allPresent(): void {
+  if (!canManageHr.value) return;
   const missing = visibleEmployees.value.filter(
     (emp) => !hrStore.attendance.some((record) => record.employeeId === emp.id && record.date === today)
   );
@@ -656,10 +680,10 @@ async function removeRecentLeave(): Promise<void> {
 
 function openLeaveDialog(): void {
   if (visibleEmployees.value.length === 0) {
-    ElMessage.warning(isHrAdmin.value ? "请先添加人员信息" : "当前账号未关联员工档案，请联系管理员核对姓名或工号");
+    ElMessage.warning(canManageHr.value ? "没有可操作的本楼栋人员信息" : "当前账号未关联员工档案，请联系管理员核对姓名或工号");
     return;
   }
-  leaveForm.employeeId = isHrAdmin.value ? visibleEmployees.value[0]?.id : myEmployeeId.value;
+  leaveForm.employeeId = canManageHr.value ? visibleEmployees.value[0]?.id : myEmployeeId.value;
   leaveForm.type = "sick";
   leaveForm.reason = "";
   leaveRange.value = [today, today];
@@ -671,8 +695,8 @@ function saveLeave(): void {
     ElMessage.warning("请选择员工");
     return;
   }
-  if (!isHrAdmin.value && leaveForm.employeeId !== myEmployeeId.value) {
-    ElMessage.warning("只能为本人提交请假申请");
+  if (!visibleEmployeeIds.value.has(leaveForm.employeeId) || (!canManageHr.value && leaveForm.employeeId !== myEmployeeId.value)) {
+    ElMessage.warning("只能为有权限的员工提交请假申请");
     return;
   }
   const [start, end] = leaveRange.value;
@@ -695,6 +719,8 @@ function saveLeave(): void {
 }
 
 async function approveLeave(row: { id: number }): Promise<void> {
+  const request = hrStore.leaveRequests.find((item) => item.id === row.id);
+  if (!canManageHr.value || !request || !visibleEmployeeIds.value.has(request.employeeId)) return;
   try {
     await ElMessageBox.confirm("确定批准该请假申请？", "审批确认", { type: "info" });
   } catch {
@@ -705,6 +731,8 @@ async function approveLeave(row: { id: number }): Promise<void> {
 }
 
 async function rejectLeave(row: { id: number }): Promise<void> {
+  const request = hrStore.leaveRequests.find((item) => item.id === row.id);
+  if (!canManageHr.value || !request || !visibleEmployeeIds.value.has(request.employeeId)) return;
   try {
     await ElMessageBox.confirm("确定拒绝该请假申请？", "审批确认", { type: "warning" });
   } catch {
@@ -715,9 +743,14 @@ async function rejectLeave(row: { id: number }): Promise<void> {
 }
 
 function openOvertimeDialog(record?: HrOvertimeRecord): void {
-  if (!isHrAdmin.value && record && record.employeeId !== myEmployeeId.value) return;
+  if (record && !visibleEmployeeIds.value.has(record.employeeId)) return;
+  if (!canManageHr.value && record && record.employeeId !== myEmployeeId.value) return;
+  if (!record && visibleEmployees.value.length === 0) {
+    ElMessage.warning(canManageHr.value ? "没有可操作的本楼栋人员信息" : "当前账号未关联员工档案，请联系管理员核对姓名或工号");
+    return;
+  }
   overtimeEditingId.value = record?.id ?? null;
-  overtimeForm.employeeId = record?.employeeId || (isHrAdmin.value ? visibleEmployees.value[0]?.id : myEmployeeId.value) || 0;
+  overtimeForm.employeeId = record?.employeeId || (canManageHr.value ? visibleEmployees.value[0]?.id : myEmployeeId.value) || 0;
   overtimeForm.date = record?.date || today;
   overtimeForm.hours = record?.hours || 2;
   overtimeForm.reason = record?.reason || "";
@@ -729,11 +762,16 @@ function saveOvertime(): void {
     ElMessage.warning("请填写完整信息");
     return;
   }
-  if (!isHrAdmin.value && overtimeForm.employeeId !== myEmployeeId.value) {
-    ElMessage.warning("只能为本人提交加班申请");
+  if (!visibleEmployeeIds.value.has(overtimeForm.employeeId) || (!canManageHr.value && overtimeForm.employeeId !== myEmployeeId.value)) {
+    ElMessage.warning("只能为有权限的员工提交加班申请");
     return;
   }
   if (overtimeEditingId.value) {
+    const existing = hrStore.overtime.find((record) => record.id === overtimeEditingId.value);
+    if (!existing || !visibleEmployeeIds.value.has(existing.employeeId)) {
+      ElMessage.warning("只能维护有权限的加班记录");
+      return;
+    }
     hrStore.updateOvertime(overtimeEditingId.value, {
       date: overtimeForm.date,
       hours: overtimeForm.hours,
@@ -754,32 +792,38 @@ function saveOvertime(): void {
 }
 
 async function approveOvertime(row: HrOvertimeRecord): Promise<void> {
+  const record = hrStore.overtime.find((item) => item.id === row.id);
+  if (!canManageHr.value || !record || !visibleEmployeeIds.value.has(record.employeeId)) return;
   try {
     await ElMessageBox.confirm("确定批准该加班记录？", "审批确认", { type: "info" });
   } catch {
     return;
   }
-  hrStore.updateOvertime(row.id, { status: "approved" });
+  hrStore.updateOvertime(record.id, { status: "approved" });
   ElMessage.success("已批准");
 }
 
 async function rejectOvertime(row: HrOvertimeRecord): Promise<void> {
+  const record = hrStore.overtime.find((item) => item.id === row.id);
+  if (!canManageHr.value || !record || !visibleEmployeeIds.value.has(record.employeeId)) return;
   try {
     await ElMessageBox.confirm("确定拒绝该加班记录？", "审批确认", { type: "warning" });
   } catch {
     return;
   }
-  hrStore.updateOvertime(row.id, { status: "rejected" });
+  hrStore.updateOvertime(record.id, { status: "rejected" });
   ElMessage.info("已拒绝");
 }
 
 async function removeOvertime(row: HrOvertimeRecord): Promise<void> {
+  const record = hrStore.overtime.find((item) => item.id === row.id);
+  if (!canManageHr.value || !record || !visibleEmployeeIds.value.has(record.employeeId)) return;
   try {
     await ElMessageBox.confirm("确定删除此加班记录？", "删除确认", { type: "warning" });
   } catch {
     return;
   }
-  hrStore.deleteOvertime(row.id);
+  hrStore.deleteOvertime(record.id);
   ElMessage.success("已删除");
 }
 
